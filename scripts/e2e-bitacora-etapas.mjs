@@ -56,7 +56,12 @@ async function api(path, opts = {}) {
   return { res, json };
 }
 
-const sql = postgres(process.env.DATABASE_URL, { max: 1, onnotice: () => {} });
+// TimeZone UTC: invariante de tiempo del proyecto (ver src/lib/db/index.ts).
+const sql = postgres(process.env.DATABASE_URL, {
+  max: 1,
+  onnotice: () => {},
+  connection: { TimeZone: "UTC" },
+});
 const eventosDe = (leadId) =>
   sql`select * from lead_stage_event where lead_id = ${leadId} order by occurred_at asc, created_at asc`;
 

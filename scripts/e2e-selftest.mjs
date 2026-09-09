@@ -605,6 +605,33 @@ async function main() {
   });
   ok("texto vacío → 422 (no se manda un mensaje en blanco)", sendVacio.res.status === 422);
 
+  // Regresión: la hora del saliente debe ser la misma en las dos vistas.
+  // Las columnas son `timestamp without time zone` y se llenan por dos caminos
+  // — `now()` de los `defaultNow()` (marco de la SESIÓN de BD) y `Date` desde
+  // JS (marco UTC, lo que Drizzle lee de vuelta). Si la sesión no está en UTC,
+  // `message.created_at` (burbuja del hilo) se desfasa de
+  // `conversation.last_message_at` (lista) por el offset del servidor de BD.
+  console.log("\n== zona horaria: la misma hora en la lista y en el hilo ==");
+  const convTz = ((await api("/api/conversations")).json?.conversations ?? [])
+    .find((c) => c.id === convId);
+  const minutos = (a, b) => Math.abs(Date.parse(a) - Date.parse(b)) / 60000;
+  ok(
+    "el saliente trae la misma hora en el hilo y en la lista",
+    convTz?.lastMessageAt !== undefined &&
+      botMsg?.createdAt !== undefined &&
+      minutos(convTz.lastMessageAt, botMsg.createdAt) < 5,
+    JSON.stringify({
+      hilo: botMsg?.createdAt,
+      lista: convTz?.lastMessageAt,
+    })
+  );
+  ok(
+    "y esa hora es la de ahora, no la del huso del servidor de BD",
+    botMsg?.createdAt !== undefined &&
+      minutos(new Date().toISOString(), botMsg.createdAt) < 5,
+    JSON.stringify({ hilo: botMsg?.createdAt, ahora: new Date().toISOString() })
+  );
+
   console.log("\n== us-bot-api: el bot pide un humano ==");
   const hoNoKey = await api("/api/bot/handoff", {
     method: "POST",

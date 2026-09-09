@@ -47,7 +47,12 @@ async function api(path, opts = {}) {
   return { res, json };
 }
 
-const sql = postgres(process.env.DATABASE_URL, { max: 1, onnotice: () => {} });
+// TimeZone UTC: invariante de tiempo del proyecto (ver src/lib/db/index.ts).
+const sql = postgres(process.env.DATABASE_URL, {
+  max: 1,
+  onnotice: () => {},
+  connection: { TimeZone: "UTC" },
+});
 
 console.log("== Setup ==");
 const email = "e2e@vocero.test";
