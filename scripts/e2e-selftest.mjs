@@ -836,6 +836,8 @@ async function main() {
     `etapa=${detail?.stage?.name} esperada=${firstStage?.name}`
   );
 
+  await quienRespondeChecks(convId);
+
   console.log("\n== FR-022: pedir un humano no deja al cliente en silencio ==");
   {
     /**
@@ -1231,6 +1233,217 @@ async function main() {
 
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
+}
+
+/* ============================================================
+ * «Quién responde a tus clientes» (tests/e2e/us-bot-api.md, pasos 40-44)
+ *
+ * El agente incluido y un cerebro externo (Nea) no se ven entre sí: con los
+ * dos activos, el cliente recibe dos respuestas. La tarjeta del Agente lo
+ * dice con dos señales: la última llamada autenticada a /api/bot/* (en
+ * memoria) y el /health de Nea si hay BRAIN_HEALTH_URL. Aquí se levanta una
+ * Nea FALSA en el puerto de esa URL (tiene que ser local) — la app ya corre
+ * con ella en su .env — y se la pone sana y después colgada.
+ * ============================================================ */
+
+/** Una Nea de mentira: responde su /health como la Nea de verdad. */
+async function levantarNeaFalsa(url) {
+  const { createServer } = await import("node:http");
+  const estado = { modo: "sana", pedidos: 0, ultimaAuth: null, ultimaRuta: null };
+  const server = createServer((req, res) => {
+    if ((req.url ?? "").split("?")[0] !== url.pathname) {
+      res.writeHead(404);
+      return res.end();
+    }
+    estado.pedidos++;
+    estado.ultimaAuth = req.headers.authorization ?? null;
+    estado.ultimaRuta = req.url;
+    if (estado.modo === "colgada") return; // nunca contesta
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        status: "ok",
+        db: "ok",
+        version: "1.0.0",
+        commit: "abc1234",
+        commitVerified: true,
+        mode: "estándar",
+        relay: { pendientes: 0, masViejoSegundos: null, ultimoErrorEn: null },
+      })
+    );
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(Number(url.port || 80), url.hostname.replace(/^\[|\]$/g, ""), resolve);
+  });
+  return {
+    estado,
+    cerrar: () =>
+      new Promise((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+async function quienRespondeChecks(convId) {
+  console.log("\n== quién responde: la tarjeta del Agente ==");
+  const estado = async () => (await api("/api/agent/brain-status")).json;
+
+  const raw = process.env.BRAIN_HEALTH_URL;
+  const url = raw ? new URL(raw) : null;
+  const local = url && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  if (url && !local) {
+    console.log(`  SKIP /health: BRAIN_HEALTH_URL apunta a ${url.host}, no a esta máquina`);
+  }
+  // Antes de la primera consulta: así la caché de 15 s no guarda un «no está
+  // en línea» de antes de que la Nea falsa existiera.
+  const nea = local ? await levantarNeaFalsa(url) : null;
+  const perfil = (await api("/api/agent/profile")).json;
+  const enabledOriginal = perfil?.profile?.enabled === true;
+  try {
+    await quienResponde(convId, estado, url, nea);
+  } finally {
+    await nea?.cerrar();
+    await api("/api/agent/profile", {
+      method: "PUT",
+      body: JSON.stringify({ enabled: enabledOriginal }),
+    });
+  }
+}
+
+async function quienResponde(convId, estado, url, nea) {
+  const anon = await fetch(`${BASE}/api/agent/brain-status`);
+  ok("brain-status sin sesión → 401", anon.status === 401);
+
+  const antes = await estado();
+  ok(
+    "brain-status con sesión → las dos filas y el aviso",
+    typeof antes?.embedded?.answering === "boolean" &&
+      typeof antes?.external?.active === "boolean" &&
+      "warning" in (antes ?? {}),
+    JSON.stringify(antes)
+  );
+  ok("la llave del cerebro externo cuenta como configurada", antes?.external?.keyConfigured === true);
+
+  // La última llamada: solo la mueve una llamada AUTENTICADA.
+  await sleep(1100);
+  await api("/api/bot/profile", { headers: { "x-api-key": "x".repeat(BOT_KEY.length) } });
+  const trasMala = await estado();
+  ok(
+    "una llamada con key equivocada NO cuenta como «visto»",
+    trasMala?.external?.lastSeenAt === antes?.external?.lastSeenAt,
+    `${antes?.external?.lastSeenAt} → ${trasMala?.external?.lastSeenAt}`
+  );
+  const ctx = await bot(`/api/bot/context?conversationId=${convId}`);
+  ok("GET /api/bot/context con la key → 200", ctx.res.ok);
+  const despues = await estado();
+  const tAntes = Date.parse(antes?.external?.lastSeenAt ?? "") || 0;
+  const tDespues = Date.parse(despues?.external?.lastSeenAt ?? "") || 0;
+  ok(
+    "…y lastSeenAt avanza",
+    tDespues > tAntes && Date.now() - tDespues < 30_000,
+    `${antes?.external?.lastSeenAt} → ${despues?.external?.lastSeenAt}`
+  );
+  ok("…y el cerebro externo cuenta como activo", despues?.external?.active === true);
+
+  if (!url) {
+    ok("sin BRAIN_HEALTH_URL no se le pregunta a nadie (health: null)", despues?.external?.health === null);
+    console.log(
+      "  (para probar el /health: BRAIN_HEALTH_URL=http://127.0.0.1:<puerto>/health en .env y reinicia la app)"
+    );
+  }
+
+  if (nea) {
+    // Una corrida anterior pudo dejar en caché a su Nea colgada (15 s).
+    let h = null;
+    const enLinea = await hasta(async () => {
+      h = (await estado())?.external?.health ?? null;
+      return h?.reachable === true;
+    }, 25_000, 1000);
+    ok("con la Nea falsa sana: en línea", enLinea, JSON.stringify(h));
+    ok(
+      "…con versión, modo y cola del relevo",
+      h?.version === "1.0.0" && h?.mode === "estándar" && h?.relay?.pendientes === 0,
+      JSON.stringify(h)
+    );
+    ok("…y solo el host de la URL", h?.host === url.host, h?.host);
+    const dump = JSON.stringify(await estado());
+    const secretos = [url.username, url.password, url.search.slice(1)].filter(Boolean);
+    ok(
+      "credenciales y query de BRAIN_HEALTH_URL no salen en la respuesta",
+      secretos.every((s) => !dump.includes(decodeURIComponent(s))),
+      `revisados ${secretos.length}`
+    );
+    if (url.username || url.password) {
+      ok(
+        "…pero sí viajan a Nea (Authorization: Basic)",
+        nea.estado.ultimaAuth ===
+          `Basic ${Buffer.from(`${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`).toString("base64")}`
+      );
+    }
+    const pedidosAntes = nea.estado.pedidos;
+    await Promise.all([estado(), estado(), estado()]);
+    ok(
+      "tres consultas seguidas no martillan a Nea (caché)",
+      nea.estado.pedidos === pedidosAntes,
+      `${pedidosAntes} → ${nea.estado.pedidos}`
+    );
+  }
+
+  // Los dos contestando: el aviso rojo.
+  const on = await api("/api/agent/profile", {
+    method: "PUT",
+    body: JSON.stringify({ enabled: true }),
+  });
+  ok("agente incluido encendido desde la pantalla", on.res.ok);
+  const doble = await estado();
+  ok(
+    "con token de IA + agente encendido + cerebro externo activo → doble_respuesta",
+    doble?.embedded?.configured === true &&
+      doble?.embedded?.answering === true &&
+      doble?.warning === "doble_respuesta",
+    JSON.stringify({ embedded: doble?.embedded, warning: doble?.warning })
+  );
+  await api("/api/agent/profile", {
+    method: "PUT",
+    body: JSON.stringify({ enabled: false }),
+  });
+  const solo = await estado();
+  ok(
+    "apagar el agente incluido quita el aviso (contesta solo el externo)",
+    solo?.embedded?.answering === false && solo?.warning === null,
+    JSON.stringify({ embedded: solo?.embedded, warning: solo?.warning })
+  );
+
+  if (nea) {
+    // Nea colgada: la tarjeta se entera sin quedarse esperando.
+    nea.estado.modo = "colgada";
+    let h = null;
+    let masLenta = 0;
+    const caida = await hasta(async () => {
+      const t0 = Date.now();
+      h = (await estado())?.external?.health ?? null;
+      masLenta = Math.max(masLenta, Date.now() - t0);
+      return h?.reachable === false;
+    }, 25_000, 1000);
+    ok(
+      "con Nea colgada: no está en línea, por tiempo agotado",
+      caida && h?.problem === "timeout",
+      JSON.stringify(h)
+    );
+    ok(
+      "…y la consulta no se cuelga con ella (≤ 4 s)",
+      masLenta <= 4000,
+      `${masLenta} ms`
+    );
+    const sigue = await estado();
+    ok(
+      "…la llamada reciente la sigue contando como activa",
+      sigue?.external?.active === true,
+      JSON.stringify(sigue?.external)
+    );
+  }
 }
 
 /* ============================================================

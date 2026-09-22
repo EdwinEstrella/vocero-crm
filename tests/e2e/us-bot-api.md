@@ -139,3 +139,29 @@ CRM no impone un cuestionario.
 39. Con Meta caído (token `...-invalid` en el mock), typing → **200**
     `{ok:false, reason:"meta_error"}`: es best-effort por contrato, al bot
     jamás le vale reintentarlo.
+
+## Quién responde a tus clientes
+
+La tarjeta de arriba de la pantalla Agente (`GET /api/agent/brain-status`).
+Para los pasos del `/health`, la app corre con `BRAIN_HEALTH_URL` apuntando a
+un puerto local donde el guion levanta una Nea falsa (con credenciales y query
+de prueba en la URL).
+
+40. Sin sesión → **401**. Con sesión → `embedded`, `external` y `warning`;
+    `external.keyConfigured: true` (hay `BOT_API_KEY`).
+41. Una llamada a `/api/bot/*` con key equivocada NO mueve
+    `external.lastSeenAt`; `GET /api/bot/context` con la key sí, y el cerebro
+    externo queda `active: true`.
+42. Con la Nea falsa sana: `health.reachable: true` con `version`, `mode` y
+    `relay.pendientes`; `health.host` es solo el host, y ni las credenciales
+    ni la query de la URL aparecen en la respuesta (a Nea sí le llegan, como
+    `Authorization: Basic`). Tres consultas seguidas = cero pedidos nuevos a
+    Nea (caché de 15 s).
+43. Con token de IA y el agente incluido encendido → `warning:
+    "doble_respuesta"` y el aviso rojo en la tarjeta. Apagarlo lo quita.
+44. Con la Nea falsa colgada: en ≤ 4 s la consulta vuelve con
+    `reachable: false`, `problem: "timeout"`; la llamada reciente la sigue
+    contando como activa.
+45. En la bandeja, con el cerebro externo activo y el agente incluido
+    apagado, el panel dice «Responde tu cerebro externo (Nea)» en vez de
+    pedir la clave de IA.
