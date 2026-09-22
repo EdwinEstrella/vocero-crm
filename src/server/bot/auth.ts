@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { getDb, schema } from "@/lib/db";
 import { apiError } from "@/lib/api";
 import { checkRateLimit, clientIp } from "@/lib/rate-limit";
+import { markBotSeen } from "@/server/bot/status";
 
 /**
  * Autenticación de la API de servicio `/api/bot/*`.
@@ -16,6 +17,15 @@ import { checkRateLimit, clientIp } from "@/lib/rate-limit";
  * contado antes de mirar la key: 600 requests anónimos por minuto dejaban al
  * cerebro en 429 el resto de la ventana, y los clientes sin respuesta.
  */
+
+const MIN_KEY_LENGTH = 16;
+
+/** La superficie está abierta: hay `BOT_API_KEY` y no es débil. Una key
+ *  corta equivale a no tenerla (todo responde 401). */
+export function isBotKeyConfigured(): boolean {
+  const key = process.env.BOT_API_KEY;
+  return typeof key === "string" && key.length >= MIN_KEY_LENGTH;
+}
 
 /**
  * Presupuesto del cerebro AUTENTICADO: 1200/min (20/s sostenidos). Nea hace
@@ -44,6 +54,10 @@ export function requireBotKey(req: Request): Response | null {
       ? apiError(401, "unauthorized", "No autorizado")
       : apiError(429, "rate_limited", "Demasiados intentos fallidos");
   }
+  // «Quién responde»: la única huella que deja el cerebro externo en el CRM.
+  // Se marca al autenticar, antes del presupuesto: un cerebro frenado por 429
+  // sigue siendo el que contesta.
+  markBotSeen();
   const rl = checkRateLimit("bot-api", BOT_API_BUDGET);
   if (!rl.allowed) return apiError(429, "rate_limited", "Demasiadas solicitudes");
   return null;
@@ -51,7 +65,7 @@ export function requireBotKey(req: Request): Response | null {
 
 function validBotKey(provided: string | null): boolean {
   const expected = process.env.BOT_API_KEY;
-  if (!expected || expected.length < 16 || !provided) return false;
+  if (!expected || !isBotKeyConfigured() || !provided) return false;
   const a = Buffer.from(provided);
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
