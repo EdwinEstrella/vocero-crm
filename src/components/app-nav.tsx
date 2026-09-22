@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   AlertTriangle,
   CalendarDays,
+  ChartColumn,
   FlaskConical,
   Inbox,
   Kanban,
@@ -41,6 +42,9 @@ const NAV: NavItem[] = [
   { href: "/inbox", label: "Bandeja", icon: Inbox, badge: true },
   { href: "/pipeline", label: "Pipeline", icon: Kanban },
   { href: "/contacts", label: "Contactos", icon: Users },
+  // 019 — Después de Contactos: primero se atiende y se organiza, luego se
+  // mide. Antes de Agente y Laboratorio, que son configuración.
+  { href: "/results", label: "Resultados", icon: ChartColumn },
   { href: "/agent", label: "Agente", icon: Sparkles },
   { href: "/lab", label: "Laboratorio", icon: FlaskConical },
 ];
