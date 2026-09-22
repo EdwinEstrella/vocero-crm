@@ -33,6 +33,8 @@
        --bg y un chip con fondo --bg desaparece dentro de la fila. */
     --chip-bg: #ffffff;
     --row-hover: #f6f8fc;
+    /* 215 — Lo no hábil del calendario de Citas (ver .cal-off). */
+    --cal-off: #f6f8fc;
 
     /* Chat: el cliente entra en verde WhatsApp, el CRM contesta en el acento */
     --chat-bg: #f6f8fc;
@@ -99,6 +101,10 @@
     --bg: #0b1327;
     --bg-subtle: #070e20;
     --bg-panel: #131f3d;
+    /* 215 — --bg-subtle apenas se separa de --bg (1.04:1) y el horario del
+       negocio no se distinguía en la rejilla: un paso más oscuro (≈1.08:1,
+       lo mismo que separa --bg-subtle de --bg en claro). */
+    --cal-off: #040a18;
     --bg-hover: #182750;
     --text: #e8eefc;
     --text-2: #a9b8dc;
@@ -284,6 +290,29 @@
       circle at 82% 0%,
       color-mix(in srgb, var(--accent) 16%, transparent),
       transparent 60%
+    );
+  }
+
+  /* 215 — Rejilla del calendario de Citas: una línea por hora. El alto de la
+     hora lo fija el componente (--cal-hour) para que líneas y citas no se
+     desfasen si alguien lo cambia en un solo sitio. */
+  .cal-hours {
+    background-image: linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+    background-size: 100% var(--cal-hour, 48px);
+  }
+
+  /* 215 — Horas fuera del horario del negocio en Día y Semana. */
+  .cal-off {
+    background-color: var(--cal-off);
+  }
+
+  /* 215 — Un bloqueo no es una cita: rayado neutro, legible en ambos temas. */
+  .booking-hatch {
+    background-color: var(--bg-panel);
+    background-image: repeating-linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--text-3) 22%, transparent) 0 1px,
+      transparent 1px 7px
     );
   }
 
