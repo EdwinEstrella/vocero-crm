@@ -14,7 +14,7 @@ import {
   resolveStage,
   type AgentActionType,
 } from "@/server/ai/actions";
-import { matchesHandoffIntent } from "@/server/ai/handoff";
+import { HANDOFF_BACKUP_ACK, matchesHandoffIntent } from "@/server/ai/handoff";
 import { buildAgentSystemPrompt } from "@/server/ai/prompts";
 import { agendaEnabled } from "@/server/agenda/flag";
 import { bookSlot, offerSlots } from "@/server/agenda/agent";
@@ -135,8 +135,11 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
     return;
   }
 
-  // Patrón de respaldo ANTES del LLM (FR-022).
+  // Patrón de respaldo ANTES del LLM (FR-022). Avisa y traspasa, en el mismo
+  // orden que el camino del modelo (`farewell` y luego handoff): callar ante
+  // quien pide una persona se lee como que el bot dejó de contestar.
   if (lastInbound.text && matchesHandoffIntent(lastInbound.text)) {
+    await acknowledgeHandoff(conversation);
     await applyHandoff(conversationId, organizationId, "cliente");
     return;
   }
@@ -305,6 +308,32 @@ async function deliverReply(
       return;
     }
     throw err;
+  }
+}
+
+/**
+ * FR-022 — El acuse del patrón de respaldo, antes de traspasar.
+ *
+ * Sale por `deliverReply`, el mismo camino que el `farewell` del modelo, así
+ * que hereda sus garantías: una conversación del Laboratorio lo persiste sin
+ * tocar la API, y con la ventana de 24 h cerrada no sale texto libre (el turno
+ * ya traspasó por `ventana` antes de llegar aquí, y el emisor lo rechazaría
+ * igual). Tampoco se repite si el turno vuelve a correr: el traspaso deja
+ * `handoffAt` puesto y el turno siguiente se calla en la primera comprobación,
+ * igual que tras el `farewell`.
+ *
+ * Lo único que cambia respecto a ese camino: si el envío falla, el traspaso
+ * se aplica IGUAL. Quien pidió una persona tiene que llegar a una aunque el
+ * aviso no haya salido; dejarlo con la IA encendida sería peor que el silencio.
+ */
+async function acknowledgeHandoff(conversation: Conversation): Promise<void> {
+  try {
+    await deliverReply(conversation, HANDOFF_BACKUP_ACK);
+  } catch (err) {
+    console.error(
+      `[agente] el acuse del traspaso no salió en ${conversation.id}; se traspasa igual:`,
+      err
+    );
   }
 }
 

@@ -785,6 +785,104 @@ async function main() {
     `etapa=${detail?.stage?.name} esperada=${firstStage?.name}`
   );
 
+  console.log("\n== FR-022: pedir un humano no deja al cliente en silencio ==");
+  {
+    /**
+     * El patrón de respaldo (antes del modelo) traspasaba SIN mandar nada: el
+     * cliente que escribía «quiero hablar con un humano» no recibía respuesta,
+     * aunque por dentro el traspaso sí ocurría. Lo encontró @fondeur27-09-73
+     * (#62).
+     *
+     * El ai-mock, si le llegara esta frase, traspasaría SIN `farewell` y con
+     * motivo `modelo`. Así que el motivo `cliente` prueba que decidió el
+     * patrón, y el saliente prueba el arreglo: con el bug hay cero mensajes.
+     *
+     * Hay que ENCENDER el agente in-process a propósito, y apagarlo al final
+     * para no alterar lo que sigue.
+     */
+    await api("/api/agent/profile", {
+      method: "PUT",
+      body: JSON.stringify({ enabled: true }),
+    });
+
+    // Contacto nuevo por corrida: con uno fijo, la segunda ejecución lo
+    // encontraría ya traspasado y el agente no llegaría a correr.
+    const CORRIDA = Date.now().toString().slice(-6);
+    const TEL = `5214628${CORRIDA}`;
+    const CANONICO = `524628${CORRIDA}`;
+    const decir = (texto, n) =>
+      api("/api/dev/wa-mock/inbound", {
+        method: "POST",
+        body: JSON.stringify({
+          phoneNumberId: PN,
+          from: TEL,
+          name: "Lead pide humano",
+          text: texto,
+          waMessageId: `wamid.e2e.022.${CORRIDA}.${n}`,
+        }),
+      });
+    const convDe = async () =>
+      ((await api("/api/conversations")).json?.conversations ?? []).find(
+        (c) => c.contact.phone === CANONICO
+      );
+    const salientesDe = async (id) =>
+      ((await api(`/api/conversations/${id}/messages`)).json?.messages ?? []).filter(
+        (m) => m.direction === "out"
+      );
+    const alCliente = async () =>
+      ((await api("/api/dev/wa-mock/outbox")).json?.outbox ?? []).filter(
+        (o) => o.to === CANONICO
+      );
+
+    await decir("quiero hablar con un humano", 1);
+    // Lo que se espera es el TRASPASO; cuánto tarde el debounce no es asunto
+    // del check.
+    await hasta(async () => Boolean((await convDe())?.handoffAt));
+    const conv = await convDe();
+    ok(
+      "decide el patrón de respaldo, antes del modelo (motivo `cliente`)",
+      Boolean(conv?.handoffAt) && conv?.handoffReason === "cliente",
+      JSON.stringify({ handoffAt: conv?.handoffAt, reason: conv?.handoffReason })
+    );
+
+    if (conv) {
+      const salientes = await salientesDe(conv.id);
+      ok(
+        "el cliente recibe un acuse antes del traspaso (antes: cero mensajes)",
+        salientes.length === 1 && /persona del equipo/.test(salientes[0]?.text ?? ""),
+        `salientes=${salientes.length} ${JSON.stringify(salientes.map((m) => m.text))}`
+      );
+      ok(
+        "el acuse queda en la bandeja marcado como IA",
+        salientes[0]?.aiGenerated === true && salientes[0]?.origin === "ai",
+        JSON.stringify({ aiGenerated: salientes[0]?.aiGenerated, origin: salientes[0]?.origin })
+      );
+      const cable = await alCliente();
+      ok(
+        "y salió de verdad por el canal de WhatsApp, al número del cliente",
+        cable.length === 1 && JSON.stringify(cable[0]?.body).includes("persona del equipo"),
+        `envíos=${cable.length}`
+      );
+
+      // Un turno nuevo sobre la conversación YA traspasada: su último
+      // entrante vuelve a ser la frase del patrón, así que si el silencio del
+      // traspaso no mandara, el acuse saldría otra vez.
+      await decir("sigo esperando, quiero hablar con un humano", 2);
+      const coalesce = Number(process.env.AGENT_COALESCE_MS ?? 6000);
+      await sleep(coalesce + 2500);
+      ok(
+        "tras el traspaso la IA calla: el acuse NO se repite",
+        (await salientesDe(conv.id)).length === 1 && (await alCliente()).length === 1,
+        `salientes=${(await salientesDe(conv.id)).length} envíos=${(await alCliente()).length}`
+      );
+    }
+
+    await api("/api/agent/profile", {
+      method: "PUT",
+      body: JSON.stringify({ enabled: false }),
+    });
+  }
+
   console.log("\n== 008: paridad inbox — echoes de coexistence (US1) ==");
   const LEAD = "5214627008001"; // canónica: 524627008001
 
