@@ -929,7 +929,9 @@ export const adAttribution = pgTable(
       .references(() => conversation.id, { onDelete: "cascade" }),
     /**
      * El identificador del clic en el anuncio. Es la llave de TODO: sin él no
-     * hay nada que reportarle a Meta. Nullable porque hay referrals sin clid.
+     * hay nada que reportarle a Meta. Nullable porque hay referrals sin clid,
+     * y porque sin la bandera ATRIBUCION no se guarda (018): el origen del
+     * anuncio se ve siempre, el identificador de clic solo si se atribuye.
      */
     ctwaClid: text("ctwa_clid"),
     sourceId: text("source_id"),
@@ -939,8 +941,19 @@ export const adAttribution = pgTable(
     body: text("body"),
     mediaType: text("media_type"),
     /**
-     * Payload íntegro del referral. Es la póliza contra "Meta agregó un campo":
-     * nada se pierde y un fork puede pintar el creativo sin migrar nada.
+     * 018 — La imagen del creativo, copiada del CDN de Meta (su URL caduca en
+     * días). Compartida por todas las conversaciones del mismo `source_id`: se
+     * descarga una vez por anuncio. Borrar el adjunto deja la fila sin imagen,
+     * no apuntando a nada.
+     */
+    imageAssetId: text("image_asset_id").references(() => mediaAsset.id, {
+      onDelete: "set null",
+    }),
+    /**
+     * El referral recortado a sus claves conocidas (018: con cotas de tamaño,
+     * y sin `ctwa_clid` si la bandera estaba apagada). Es la póliza contra
+     * "Meta agregó un campo", y de aquí se vuelve a leer la URL de la imagen
+     * cuando hay que reparar la copia.
      */
     raw: jsonb("raw").notNull(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -951,6 +964,8 @@ export const adAttribution = pgTable(
       t.conversationId
     ),
     index("ad_attribution_org_contact_idx").on(t.organizationId, t.contactId),
+    // 018 — la imagen ya guardada de un anuncio, y a qué filas asignarla.
+    index("ad_attribution_org_source_idx").on(t.organizationId, t.sourceId),
   ]
 );
 
