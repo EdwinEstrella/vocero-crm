@@ -84,7 +84,7 @@ cualquier otra conversación.
 
 | Endpoint | Para qué |
 |---|---|
-| `GET /api/bot/context` | Quién es la persona, su etapa, si un humano tomó la conversación y si la ventana de 24 h sigue abierta |
+| `GET /api/bot/context` | Quién es la persona, su etapa, si un humano tomó la conversación y si la ventana de 24 h sigue abierta. Con la agenda encendida, también sus citas (`booking`): la próxima, la que ya pasó sin cerrarse y la última que se cerró (cancelada, no asistió o realizada) |
 | `POST /api/bot/messages` | Responder. Sale por el mismo camino que el composer y queda marcado como IA |
 | `GET /api/bot/profile` | El perfil del agente y el knowledge base que editaste en la app |
 | `PUT /api/bot/ficha` | Guardar lo que tu bot descubre del lead (claves libres: cada negocio califica distinto) |

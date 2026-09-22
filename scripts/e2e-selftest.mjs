@@ -471,6 +471,28 @@ async function main() {
     JSON.stringify(ctx.json?.conversation)
   );
 
+  // 015 — `booking` es aditivo y solo existe con la agenda encendida. Un
+  // cerebro lo tolera ausente (no afirma nada sobre citas); lo que no puede
+  // recibir es un bloque vacío en una instancia SIN agenda, porque lo leería
+  // como «este lead no tiene cita».
+  if (/^(on|1|true|si|sí|yes)$/i.test((process.env.AGENDA ?? "").trim())) {
+    const b = ctx.json?.booking;
+    ok(
+      "con la agenda encendida el contexto trae `booking` (sin citas: las tres vacías)",
+      typeof b?.timezone === "string" &&
+        b.next === null &&
+        b.unresolved === null &&
+        b.lastClosed === null,
+      JSON.stringify(b)
+    );
+  } else {
+    ok(
+      "con la agenda apagada el contexto NO trae `booking`, ni vacío",
+      Boolean(ctx.json) && !("booking" in ctx.json),
+      JSON.stringify(Object.keys(ctx.json ?? {}))
+    );
+  }
+
   const ctxByIdentity = await bot(
     `/api/bot/context?waIdentity=${encodeURIComponent(ctx.json.contact.waIdentity)}`
   );
@@ -1366,6 +1388,38 @@ async function agendaChecks() {
     JSON.stringify(lista.map((b) => ({ id: b.id, source: b.source })))
   );
 
+  /**
+   * El contexto del cerebro SABE de la cita.
+   *
+   * Sin esto un cerebro externo solo conoce la cita por el historial, y en la
+   * edición cloud eso acabó en una segunda cita para quien no llegó a la
+   * primera y en «tu demo es hoy a las 10:30» dicho por la tarde. Nea lee este
+   * bloque tal cual; la raíz no lo mandaba.
+   */
+  const ctxConCita = await bot(`/api/bot/context?conversationId=${convA.id}`);
+  const proxima = ctxConCita.json?.booking?.next;
+  ok(
+    "el contexto del cerebro trae la cita que viene: id, instante UTC y estado",
+    proxima?.id === creada.json?.bookingId &&
+      proxima?.startUtc === elegido &&
+      proxima?.status === "agendada" &&
+      proxima?.endUtc === new Date(Date.parse(elegido) + 30 * 60_000).toISOString(),
+    JSON.stringify(ctxConCita.json?.booking)
+  );
+  ok(
+    "…con la etiqueta del día en palabras, en la zona del negocio",
+    ctxConCita.json?.booking?.timezone === "America/Mexico_City" &&
+      typeof proxima?.label === "string" &&
+      proxima.label.endsWith(`, ${slotsA[0].time}`) &&
+      proxima.label.length > `, ${slotsA[0].time}`.length + 8,
+    `label=${JSON.stringify(proxima?.label)} time=${slotsA[0].time}`
+  );
+  ok(
+    "…y con el enlace que se le dio al cliente",
+    proxima?.meetingLink === SALA && proxima?.linkPending === false,
+    JSON.stringify({ meetingLink: proxima?.meetingLink, linkPending: proxima?.linkPending })
+  );
+
   // GARANTÍA 2: la carrera. B tenía el mismo hueco ofrecido y llega tarde.
   const ofertaB = await bot(
     `/api/bot/availability?conversationId=${convB.id}&limit=12&perDay=3&days=5`
@@ -1435,6 +1489,13 @@ async function agendaChecks() {
       "reprogramar responde 200 (NO 201): no crea un recurso nuevo",
       movida.res.status === 200,
       `status=${movida.res.status}`
+    );
+    const ctxMovida = (await bot(`/api/bot/context?conversationId=${convA.id}`)).json
+      ?.booking?.next;
+    ok(
+      "el contexto sigue a la cita movida: la MISMA cita, en su instante nuevo",
+      ctxMovida?.id === creada.json?.bookingId && ctxMovida?.startUtc === destino.startUtc,
+      JSON.stringify(ctxMovida)
     );
   }
 
@@ -1561,6 +1622,30 @@ async function agendaChecks() {
     "cancelar dos veces no falla (idempotente)",
     cancelada1.res.ok && cancelada2.res.ok,
     `${cancelada1.res.status}/${cancelada2.res.status}`
+  );
+
+  /**
+   * Y el contexto dice que se CANCELÓ, y quién.
+   *
+   * En la edición cloud, sin esto, el agente le contestó a un cliente cuya
+   * demo canceló el equipo «no quedó guardada, por alguna razón»: veía la
+   * cita en el historial y no en el contexto, e inventó el motivo.
+   */
+  const ctxCancelada = (await bot(`/api/bot/context?conversationId=${convA.id}`)).json
+    ?.booking;
+  ok(
+    "cancelada desde el panel, el contexto ya no la da por vigente",
+    Boolean(ctxCancelada) && ctxCancelada.next?.id !== bookingId,
+    JSON.stringify(ctxCancelada?.next)
+  );
+  ok(
+    "…y la trae como cancelada por el equipo, sin enlace",
+    ctxCancelada?.lastClosed?.id === bookingId &&
+      ctxCancelada.lastClosed.status === "cancelada" &&
+      ctxCancelada.lastClosed.cancelledBy === "equipo" &&
+      typeof ctxCancelada.lastClosed.closedAt === "string" &&
+      !("meetingLink" in ctxCancelada.lastClosed),
+    JSON.stringify(ctxCancelada?.lastClosed)
   );
 
   const reintentoInvalido = await api(`/api/bookings/${bookingId}`, {

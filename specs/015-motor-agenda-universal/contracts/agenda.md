@@ -172,6 +172,65 @@ humano (incidente real del fork).
 **Cancelar por esta superficie NO existe en v1**: esa decisión es del dueño —
 el camino es handoff.
 
+### `GET /api/bot/context` → `booking`
+
+> Añadido después de la implementación de 015 (aditivo, sin migración): se
+> porta de la edición cloud, donde se diseñó y se verificó en vivo con Nea.
+
+A diferencia del resto de esta sección, el contexto existe siempre (es de
+`/api/bot/*`, no de la agenda): lo que depende de la bandera es **un campo**.
+Con `AGENDA=on` trae las citas del contacto; apagada, `booking` **falta** — ni
+`null` ni vacío, porque un bloque vacío se leería como «este lead no tiene
+cita».
+
+```json
+{
+  "booking": {
+    "timezone": "America/Mexico_City",
+    "next": {
+      "id": "bk_…",
+      "status": "agendada",
+      "startUtc": "2026-09-15T15:00:00.000Z",
+      "endUtc": "2026-09-15T15:30:00.000Z",
+      "label": "mañana martes, 15 de septiembre, 09:00",
+      "meetingLink": "https://meet.google.com/…",
+      "linkPending": false
+    },
+    "unresolved": null,
+    "lastClosed": {
+      "id": "bk_…",
+      "status": "cancelada",
+      "startUtc": "…", "endUtc": "…", "label": "…",
+      "closedAt": "2026-09-14T22:00:00.000Z",
+      "cancelledBy": "equipo"
+    }
+  }
+}
+```
+
+- `next` es la próxima cita `agendada`: la misma que mueve `PATCH
+  /api/bot/bookings`. `null` si no hay.
+- `unresolved` es la última que **ya empezó** (hasta 7 días atrás) y nadie
+  marcó como realizada ni no-show. Si el cliente escribe «no pude entrar»,
+  habla de ésta; con `endUtc` sabes si todavía está en curso.
+- `lastClosed` es la última cita que se **cerró** en los últimos 7 días
+  (`cancelada`, `no_show` o `realizada`) con `closedAt`. No trae enlace: ya no
+  sirve. `cancelledBy` solo en las canceladas, y aquí siempre es `equipo`:
+  cancelar no existe por esta superficie, así que solo se cancela desde el
+  panel. (La edición cloud, donde el cerebro sí cancela, también usa `agente`.)
+- `label` trae el día en palabras relativo a *ahora* («hoy», «mañana») en la
+  zona de `timezone`. Los instantes, en UTC con `Z`.
+- Las citas **de prueba** (Laboratorio) no aparecen nunca, y los bloqueos del
+  operador tampoco: no son de ningún contacto.
+- Si la lectura de las citas falla, `booking` falta y el resto del contexto
+  sale igual: sin contexto un cerebro se calla, y la agenda es opcional.
+
+Es la verdad sobre las citas; el historial no lo es: no se entera de que una
+hora ya pasó ni de que el equipo canceló desde el panel. Un cerebro que afirma
+citas solo por el historial acaba reservando una segunda cita para quien no
+llegó a la primera. Misma forma que la edición cloud (más `status` en las
+vigentes), para que un cerebro sirva contra las dos.
+
 ---
 
 ## Agente in-process
