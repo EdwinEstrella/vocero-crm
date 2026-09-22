@@ -10,8 +10,9 @@ import animate from "tailwindcss-animate";
  *
  * Dos reglas para no romper el tema oscuro:
  * 1. Nada de colores literales en la UI (`text-white`, `bg-black`, hex suelto).
- *    Excepción deliberada: la paleta de identidad (avatares, puntos de etapa,
- *    palomita azul de WhatsApp) son tonos medios legibles en ambos temas.
+ *    Excepción deliberada: la paleta de identidad (avatares, palomita azul de
+ *    WhatsApp) son tonos medios legibles en ambos temas. Los puntos de etapa
+ *    ya no lo son: salen de los tokens del tema y siguen al acento.
  * 2. Nada de modificador de opacidad (`bg-brand/20`) sobre estos nombres:
  *    Tailwind 3 no sabe aplicarlo a un color `var(--x)` y descarta la regla en
  *    silencio. Usa un token propio (p. ej. `--accent-veil`) o `opacity-*`.
@@ -100,6 +101,8 @@ const config: Config = {
         },
         overlay: "var(--overlay)",
         knob: "var(--knob)",
+        chip: "var(--chip-bg)",
+        "row-hover": "var(--row-hover)",
       },
       borderRadius: {
         sm: "var(--radius-sm)",

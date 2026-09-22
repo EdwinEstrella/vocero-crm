@@ -83,3 +83,18 @@ de detalles sigue siendo cajón.
 En 1440×900: lateral fijo de 224 px sin hamburguesa, Bandeja de tres columnas
 (lista 360 px + hilo + detalles 320 px) y la preferencia de "panel abierto"
 persistida como siempre.
+
+## AC-7 — Barra bicolor e interruptores
+
+1. Con el tema claro, mira la barra lateral.
+
+Esperado: azul marino con texto claro, aunque la página sea blanca. La app es
+bicolor en los dos temas; el acento de la barra es el white-label calculado
+para fondo oscuro.
+
+2. Alterna «IA en esta conversación» (Bandeja) y el interruptor del Agente.
+
+Esperado: en los dos estados el pomo queda **dentro** de la pista, pegado al
+extremo que le toca (#53: el del Agente arrancaba del centro y, encendido,
+quedaba afuera). Un clic lo cambia y Espacio, con el foco en él, también. Sin
+proveedor de IA el del Agente se ve atenuado y no reacciona.

@@ -1,314 +1,533 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useEvents } from "@/components/use-events";
+import { Switch } from "@/components/ui/switch";
+import {
+  LIST_DEFAULT_DAYS,
+  MAX_RANGE_DAYS,
+  calendarVisible,
+  clampListTo,
+  coalesce,
+  datesOf,
+  daysBetween,
+  hhmm,
+  isCalendarView,
+  monthWeeks,
+  rangeLabel,
+  shiftRange,
+  spanLabel,
+  tzOffsetLabel,
+  visibleRange,
+  wallClock,
+  workingBands,
+  type CalendarView,
+  type DateRange,
+} from "@/lib/time/calendar";
+import { addDaysISO, dayIsoInTz } from "@/lib/time/slots";
+import type { WeeklyHours } from "@/server/agenda/settings";
+import { cn } from "@/lib/utils";
+import { AgendaList } from "./agenda-list";
+import { BlockDialog } from "./block-dialog";
+import { BookingDrawer, type ActResult } from "./booking-drawer";
+import type { Booking } from "./booking-look";
+import { CalendarToolbar } from "./calendar-toolbar";
+import { MonthGrid } from "./month-grid";
+import { TimeGrid } from "./time-grid";
 
-/** 015 — Citas: lo agendado por el operador y por la IA, con sus acciones. */
+/**
+ * 015 → 215 — Citas: lo agendado por el operador y por la IA, en un
+ * calendario como el de Google o Zoom (Día, Semana, Mes y Lista), con sus
+ * acciones en un panel lateral.
+ *
+ * Solo se piden las citas del rango visible (`/api/bookings?from=&to=`), y la
+ * vista se mantiene viva por SSE: la IA agenda mientras alguien mira. La
+ * disponibilidad NO se pide aquí: solo al abrir «Reprogramar».
+ */
 
-type Booking = {
-  id: string;
-  kind: "session" | "block";
-  status: "agendada" | "realizada" | "no_show" | "cancelada";
-  source: "manual" | "ai";
-  scheduledAtUtc: string;
-  durationMinutes: number;
-  date: string;
-  time: string;
-  weekday: string;
-  contact: { id: string; name: string } | null;
-  conversationId: string | null;
-  connector: string | null;
-  meetingLink: string | null;
-  linkPending: boolean;
-  isTest: boolean;
-  notes: string | null;
-};
+/** Preferencias de quien mira, en su navegador: no son datos del negocio. */
+const VIEW_KEY = "vocero:citas:vista";
+const CANCELLED_KEY = "vocero:citas:canceladas";
+const TESTS_KEY = "vocero:citas:pruebas";
 
-type Slot = { startUtc: string; label: string };
+/** Una ráfaga de eventos SSE (una cita y su enlace) se paga con UNA consulta. */
+const SSE_COALESCE_MS = 250;
 
-const STATUS_LABEL: Record<Booking["status"], string> = {
-  agendada: "Agendada",
-  realizada: "Realizada",
-  no_show: "No asistió",
-  cancelada: "Cancelada",
-};
+type Loaded = { key: string; bookings: Booking[]; truncated: boolean };
 
-export function BookingsClient() {
-  const [bookings, setBookings] = useState<Booking[] | null>(null);
-  const [slots, setSlots] = useState<Slot[]>([]);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [rescheduling, setRescheduling] = useState<string | null>(null);
-  const [blockStart, setBlockStart] = useState("");
-  const [blockMinutes, setBlockMinutes] = useState(60);
+function readPref(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null; // modo privado o almacenamiento bloqueado
+  }
+}
+
+function writePref(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // idem: la preferencia es una comodidad, no un requisito
+  }
+}
+
+const keyOf = (r: DateRange) => `${r.from}|${r.to}`;
+
+export function BookingsClient({
+  initialView,
+  initialDate,
+  initialListTo,
+  timezone: initialTimezone,
+  weeklyHours: initialWeeklyHours,
+}: {
+  initialView: CalendarView | null;
+  initialDate: string;
+  initialListTo: string | null;
+  timezone: string;
+  weeklyHours: WeeklyHours;
+}) {
+  // La vista se resuelve al montar (URL › última usada › tamaño de pantalla):
+  // el servidor no sabe si esto es un celular.
+  const [view, setView] = useState<CalendarView | null>(null);
+  const [anchor, setAnchor] = useState(initialDate);
+  const [listTo, setListTo] = useState<string | null>(initialListTo);
+  const [timezone, setTimezone] = useState(initialTimezone);
+  const [weeklyHours, setWeeklyHours] = useState(initialWeeklyHours);
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [showCancelled, setShowCancelled] = useState(false);
+  const [showTests, setShowTests] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [snapshot, setSnapshot] = useState<Booking | null>(null);
+  const [blockDraft, setBlockDraft] = useState<{ day: string; time: string } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [now, setNow] = useState<number | null>(null);
+  const seq = useRef(0);
 
   useEffect(() => {
-    void refresh();
+    setShowCancelled(readPref(CANCELLED_KEY) === "1");
+    setShowTests(readPref(TESTS_KEY) === "1");
+    const stored = readPref(VIEW_KEY);
+    setView(
+      initialView ??
+        (isCalendarView(stored)
+          ? stored
+          : window.matchMedia("(max-width: 767px)").matches
+            ? "dia"
+            : "semana")
+    );
+    // La línea de "ahora" y el resaltado de hoy se mueven solos.
+    setNow(Date.now());
+    const t = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(t);
+  }, [initialView]);
+
+  const range = useMemo(
+    () => (view ? visibleRange(view, anchor, listTo) : null),
+    [view, anchor, listTo]
+  );
+  const days = useMemo(() => (range ? datesOf(range) : []), [range]);
+  const rangeKey = range ? keyOf(range) : null;
+  const rangeRef = useRef(rangeKey);
+  rangeRef.current = rangeKey;
+
+  const load = useCallback(async (key: string) => {
+    const [from, to] = key.split("|") as [string, string];
+    const id = ++seq.current;
+    setLoading(true);
+    const res = await fetch(`/api/bookings?from=${from}&to=${to}`).catch(() => null);
+    const data = res?.ok
+      ? ((await res.json().catch(() => null)) as {
+          bookings: Booking[];
+          timezone: string;
+          weeklyHours: WeeklyHours;
+          truncated?: boolean;
+        } | null)
+      : null;
+    // Varias navegaciones seguidas: solo se pinta la respuesta del último rango.
+    if (id !== seq.current) return;
+    setLoading(false);
+    if (!data) {
+      setLoadError(true);
+      return;
+    }
+    setLoadError(false);
+    setTimezone(data.timezone);
+    setWeeklyHours(data.weeklyHours);
+    setLoaded({ key, bookings: data.bookings, truncated: Boolean(data.truncated) });
   }, []);
 
-  // La agenda cambia también cuando agenda la IA: SSE mantiene la vista viva.
-  useEvents({ onBookingUpdated: () => void refresh() });
+  const reload = useCallback(async () => {
+    if (rangeRef.current) await load(rangeRef.current);
+  }, [load]);
 
-  async function refresh() {
-    const [list, avail] = await Promise.all([
-      fetch("/api/bookings").catch(() => null),
-      fetch("/api/calendar/availability").catch(() => null),
-    ]);
-    if (list?.ok) {
-      const data = (await list.json()) as { bookings: Booking[] };
-      setBookings(data.bookings);
+  useEffect(() => {
+    if (rangeKey) void load(rangeKey);
+  }, [rangeKey, load]);
+
+  // La agenda cambia también cuando agenda la IA. Antes cada evento pedía la
+  // lista Y la disponibilidad de toda la ventana; ahora una ráfaga de eventos
+  // se paga con UNA consulta del rango visible, y la disponibilidad solo se
+  // pide al abrir «Reprogramar».
+  const sse = useMemo(() => coalesce(() => void reload(), SSE_COALESCE_MS), [reload]);
+  useEffect(() => () => sse.cancel(), [sse]);
+  useEvents({ onBookingUpdated: sse.trigger, onReconnect: sse.trigger });
+
+  // La URL dice lo que se está viendo: recargar o compartir abre ahí mismo.
+  useEffect(() => {
+    if (!view) return;
+    const params = new URLSearchParams({ vista: view });
+    if (view === "lista") {
+      params.set("desde", anchor);
+      params.set("hasta", clampListTo(anchor, listTo));
     } else {
-      setBookings([]);
+      params.set("fecha", anchor);
     }
-    if (avail?.ok) {
-      const data = (await avail.json()) as { slots: Slot[] };
-      setSlots(data.slots.slice(0, 12));
+    window.history.replaceState(null, "", `?${params.toString()}`);
+  }, [view, anchor, listTo]);
+
+  const today = now === null ? null : dayIsoInTz(new Date(now), timezone);
+  const nowMinutes = now === null ? 0 : wallClock(new Date(now), timezone).minutes;
+
+  const all = useMemo(() => loaded?.bookings ?? [], [loaded]);
+  const visible = useMemo(
+    () => calendarVisible(all, { showCancelled, showTests }),
+    [all, showCancelled, showTests]
+  );
+  const counts = useMemo(() => {
+    const inRange = all.filter((b) => {
+      const day = dayIsoInTz(new Date(b.scheduledAtUtc), timezone);
+      return range !== null && day >= range.from && day <= range.to;
+    });
+    const shown = showTests ? inRange : inRange.filter((b) => !b.isTest);
+    return {
+      sessions: shown.filter((b) => b.kind === "session" && b.status !== "cancelada").length,
+      blocks: shown.filter((b) => b.kind === "block" && b.status !== "cancelada").length,
+      cancelled: shown.filter((b) => b.status === "cancelada").length,
+      tests: inRange.filter((b) => b.isTest).length,
+      google: inRange.some((b) => b.connector === "google"),
+    };
+  }, [all, timezone, range, showTests]);
+
+  const selected = selectedId
+    ? (all.find((b) => b.id === selectedId) ?? (snapshot?.id === selectedId ? snapshot : null))
+    : null;
+
+  function select(b: Booking) {
+    setSelectedId(b.id);
+    setSnapshot(b);
+  }
+
+  const closeDrawer = useCallback(() => setSelectedId(null), []);
+
+  /** Lleva el calendario a un día si no se ve en pantalla. */
+  function reveal(day: string) {
+    if (!view || !range) return;
+    if (day >= range.from && day <= range.to) return;
+    if (view === "lista") {
+      const span = daysBetween(range.from, range.to);
+      setAnchor(day);
+      setListTo(addDaysISO(day, span));
+    } else {
+      setAnchor(day);
     }
   }
 
-  async function act(id: string, body: unknown) {
-    setBusy(id);
-    setError(null);
-    const res = await fetch(`/api/bookings/${id}`, {
+  function changeView(next: CalendarView) {
+    if (next === "lista" && view !== "lista") {
+      setListTo(addDaysISO(anchor, LIST_DEFAULT_DAYS - 1));
+    }
+    setNotice(null);
+    setView(next);
+    writePref(VIEW_KEY, next);
+  }
+
+  function goToday() {
+    if (!today || !view || !range) return;
+    if (view === "lista") setListTo(addDaysISO(today, daysBetween(range.from, range.to)));
+    setAnchor(today);
+    setNotice(null);
+  }
+
+  function shift(dir: 1 | -1) {
+    if (!view) return;
+    const next = shiftRange(view, anchor, dir, listTo);
+    setAnchor(next.anchor);
+    if (view === "lista") setListTo(next.listTo);
+  }
+
+  function changeListRange(from: string, to: string) {
+    const clamped = clampListTo(from, to);
+    setNotice(
+      daysBetween(from, to) > MAX_RANGE_DAYS - 1
+        ? `La lista abarca hasta ${MAX_RANGE_DAYS} días: se muestra del ${spanLabel({ from, to: clamped })}.`
+        : null
+    );
+    setAnchor(from);
+    setListTo(clamped);
+  }
+
+  function openDay(day: string) {
+    setAnchor(day);
+    setView("dia");
+  }
+
+  /** Bloquear: en el hueco tocado o, desde la barra, en la próxima media hora. */
+  function openBlock(day?: string, time?: string) {
+    setSelectedId(null);
+    if (day && time) {
+      setBlockDraft({ day, time });
+      return;
+    }
+    const base =
+      today && range && today >= range.from && today <= range.to ? today : (range?.from ?? anchor);
+    let start = workingBands(weeklyHours, base)[0]?.startMin ?? 9 * 60;
+    if (base === today) {
+      start = Math.min(23 * 60 + 30, Math.max(start, Math.ceil((nowMinutes + 1) / 30) * 30));
+    }
+    setBlockDraft({ day: base, time: hhmm(start) });
+  }
+
+  async function act(b: Booking, body: Record<string, unknown>): Promise<ActResult> {
+    const res = await fetch(`/api/bookings/${b.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     }).catch(() => null);
-    setBusy(null);
     if (!res?.ok) {
       const data = (await res?.json().catch(() => null)) as {
         error?: { message?: string };
       } | null;
-      setError(data?.error?.message ?? "No se pudo completar la acción");
-      return;
+      return { ok: false, message: data?.error?.message ?? "No se pudo completar la acción" };
     }
-    setRescheduling(null);
-    await refresh();
+    await reload();
+    return { ok: true };
   }
 
-  async function createBlock() {
-    if (!blockStart) return;
-    setError(null);
-    const res = await fetch("/api/bookings", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        kind: "block",
-        // El input datetime-local da hora local del navegador.
-        startUtc: new Date(blockStart).toISOString(),
-        durationMinutes: blockMinutes,
-      }),
-    }).catch(() => null);
-    if (res?.status !== 201) {
-      const data = (await res?.json().catch(() => null)) as {
-        error?: { message?: string };
-      } | null;
-      setError(data?.error?.message ?? "No se pudo bloquear ese rango");
-      return;
-    }
-    setBlockStart("");
-    await refresh();
+  if (!view || !range || !today) {
+    return (
+      <div className="flex h-full flex-col">
+        <header className="border-b px-4 py-3 sm:px-6 sm:py-4">
+          <h2 className="text-[17px] font-bold tracking-tight">Citas</h2>
+        </header>
+        <p className="p-6 text-sm text-text-3">Cargando…</p>
+      </div>
+    );
   }
 
-  if (!bookings) return <p className="text-sm text-text-3">Cargando…</p>;
+  const ready = loaded?.key === rangeKey;
 
   return (
-    <div className="space-y-6">
-      {error && <p className="text-sm text-destructive">{error}</p>}
+    <div className="flex h-full min-h-0 flex-col">
+      <CalendarToolbar
+        view={view}
+        anchor={anchor}
+        listTo={clampListTo(anchor, listTo)}
+        label={rangeLabel(view, anchor, listTo)}
+        loading={loading}
+        onToday={goToday}
+        onShift={shift}
+        onJump={setAnchor}
+        onView={changeView}
+        onListRange={changeListRange}
+        onBlock={() => openBlock()}
+      />
 
-      <section className="space-y-2">
-        <h3 className="text-sm font-semibold">Bloquear un rango</h3>
-        <p className="text-sm text-text-3">
-          Para compromisos que viven fuera del CRM: ese tiempo deja de
-          ofrecerse.
-        </p>
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="block-start">Inicio</Label>
-            <Input
-              id="block-start"
-              type="datetime-local"
-              value={blockStart}
-              onChange={(e) => setBlockStart(e.target.value)}
-              className="w-56"
-            />
+      {/* En escritorio ancho el panel de la cita EMPUJA el calendario en vez
+          de taparlo: la semana entera sigue a la vista con la cita marcada. */}
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <StatusBar
+            counts={counts}
+            timezone={timezone}
+            showCancelled={showCancelled}
+            showTests={showTests}
+            onShowCancelled={(next) => {
+              setShowCancelled(next);
+              writePref(CANCELLED_KEY, next ? "1" : "0");
+            }}
+            onShowTests={(next) => {
+              setShowTests(next);
+              writePref(TESTS_KEY, next ? "1" : "0");
+            }}
+          />
+
+          {(loadError || loaded?.truncated || notice) && (
+            <div className="space-y-1 px-4 pb-2 sm:px-6">
+              {loadError && (
+                <p role="alert" className="text-sm text-danger-text">
+                  No se pudieron cargar las citas.{" "}
+                  <button
+                    type="button"
+                    onClick={() => void reload()}
+                    className="font-semibold underline"
+                  >
+                    Reintentar
+                  </button>
+                </p>
+              )}
+              {loaded?.truncated && (
+                <p className="text-sm text-warning-text">
+                  Este rango tiene demasiadas citas para mostrarlas todas: acórtalo para verlas
+                  completas.
+                </p>
+              )}
+              {notice && <p className="text-sm text-text-2">{notice}</p>}
+            </div>
+          )}
+
+          <div className="flex min-h-0 flex-1 flex-col px-2 pb-2 sm:px-4 sm:pb-4">
+            {view === "dia" || view === "semana" ? (
+              <TimeGrid
+                days={days}
+                bookings={visible}
+                timezone={timezone}
+                weeklyHours={weeklyHours}
+                today={today}
+                nowMinutes={nowMinutes}
+                tzLabel={tzOffsetLabel(timezone, new Date(now ?? Date.now()))}
+                selectedId={selectedId}
+                ready={ready}
+                onSelect={select}
+                onEmptySlot={(day, time) => openBlock(day, time)}
+                onOpenDay={openDay}
+              />
+            ) : view === "mes" ? (
+              <MonthGrid
+                weeks={monthWeeks(anchor)}
+                month={anchor.slice(0, 7)}
+                bookings={visible}
+                timezone={timezone}
+                today={today}
+                selectedId={selectedId}
+                onSelect={select}
+                onOpenDay={openDay}
+              />
+            ) : (
+              <AgendaList
+                range={range}
+                bookings={visible}
+                timezone={timezone}
+                today={today}
+                selectedId={selectedId}
+                onSelect={select}
+              />
+            )}
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="block-min">Minutos</Label>
-            <Input
-              id="block-min"
-              type="number"
-              min={10}
-              max={480}
-              value={blockMinutes}
-              onChange={(e) => setBlockMinutes(Number(e.target.value))}
-              className="w-24"
-            />
-          </div>
-          <Button
-            variant="secondary"
-            onClick={createBlock}
-            disabled={!blockStart}
-          >
-            Bloquear
-          </Button>
         </div>
-      </section>
 
-      <section className="space-y-2">
-        <h3 className="text-sm font-semibold">
-          Citas <span className="text-text-3">({bookings.length})</span>
-        </h3>
-        {bookings.length === 0 && (
-          <p className="text-sm text-text-3">
-            Todavía no hay nada agendado. Configura tu horario en Ajustes →
-            Agenda para empezar a recibir citas.
-          </p>
+        {selected && (
+          <BookingDrawer
+            booking={selected}
+            timezone={timezone}
+            today={today}
+            nowMs={now ?? Date.now()}
+            onClose={closeDrawer}
+            onAct={(body) => act(selected, body)}
+            onRescheduled={(startUtc) => reveal(dayIsoInTz(new Date(startUtc), timezone))}
+          />
         )}
-        <ul className="divide-y rounded-md border">
-          {bookings.map((b) => (
-            <li key={b.id} className="space-y-2 p-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">
-                  {b.weekday} {b.date} · {b.time}
-                </span>
-                <span className="text-xs text-text-3">
-                  {b.durationMinutes} min
-                </span>
-                <Badge
-                  variant={b.status === "cancelada" ? "secondary" : "default"}
-                >
-                  {STATUS_LABEL[b.status]}
-                </Badge>
-                {b.kind === "block" ? (
-                  <Badge variant="secondary">Bloqueo</Badge>
-                ) : (
-                  <Badge variant="secondary">
-                    {b.source === "ai" ? "Agendó la IA" : "Manual"}
-                  </Badge>
-                )}
-                {b.isTest && <Badge variant="secondary">Prueba</Badge>}
-                {b.linkPending && b.status !== "cancelada" && (
-                  <Badge variant="secondary">Sin enlace</Badge>
-                )}
-              </div>
+      </div>
 
-              <div className="flex flex-wrap items-center gap-3 text-sm text-text-3">
-                {b.contact && <span>{b.contact.name}</span>}
-                {b.meetingLink && (
-                  <a
-                    href={b.meetingLink}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="text-brand-text hover:underline"
-                  >
-                    Enlace de la reunión
-                  </a>
-                )}
-                {b.notes && <span>{b.notes}</span>}
-              </div>
-
-              {/* El proveedor falló al crear la reunión. La cita existe; lo
-                  único que falta es el enlace, y se reintenta desde aquí — sin
-                  esto, un hipo del proveedor sería una pérdida silenciosa. */}
-              {b.linkPending && b.status !== "cancelada" && (
-                <div className="flex flex-wrap items-center gap-2 rounded-sm bg-subtle p-2">
-                  <span className="text-sm text-text-2">
-                    Esta cita quedó sin enlace: el proveedor no respondió.
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={busy === b.id}
-                    onClick={() => act(b.id, { action: "retry_link" })}
-                  >
-                    Reintentar enlace
-                  </Button>
-                </div>
-              )}
-
-              {b.status === "agendada" && (
-                <div className="flex flex-wrap gap-2">
-                  {/* Un bloqueo no se "realiza" ni tiene quien falte: solo se
-                      mueve o se quita. */}
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={busy === b.id}
-                    onClick={() =>
-                      setRescheduling((r) => (r === b.id ? null : b.id))
-                    }
-                  >
-                    Reprogramar
-                  </Button>
-                  {b.kind === "session" && (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        disabled={busy === b.id}
-                        onClick={() =>
-                          act(b.id, { action: "status", status: "realizada" })
-                        }
-                      >
-                        Realizada
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        disabled={busy === b.id}
-                        onClick={() =>
-                          act(b.id, { action: "status", status: "no_show" })
-                        }
-                      >
-                        No asistió
-                      </Button>
-                    </>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy === b.id}
-                    onClick={() => act(b.id, { action: "cancel" })}
-                  >
-                    {b.kind === "block" ? "Quitar bloqueo" : "Cancelar"}
-                  </Button>
-                </div>
-              )}
-
-              {rescheduling === b.id && (
-                <div className="space-y-1 rounded-sm bg-subtle p-2">
-                  {slots.length === 0 && (
-                    <p className="text-sm text-text-3">
-                      No hay huecos libres para mover esta cita.
-                    </p>
-                  )}
-                  {slots.map((s) => (
-                    <button
-                      key={s.startUtc}
-                      type="button"
-                      disabled={busy === b.id}
-                      onClick={() =>
-                        act(b.id, {
-                          action: "reschedule",
-                          startUtc: s.startUtc,
-                        })
-                      }
-                      className="block w-full rounded-sm px-2 py-1 text-left text-sm hover:bg-accent"
-                    >
-                      {s.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-      </section>
+      {blockDraft && (
+        <BlockDialog
+          initialDay={blockDraft.day}
+          initialTime={blockDraft.time}
+          timezone={timezone}
+          onCancel={() => setBlockDraft(null)}
+          onCreated={(day) => {
+            setBlockDraft(null);
+            reveal(day);
+            void reload();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * Cuántas hay en el rango, en qué hora se pinta y si se ven las canceladas y
+ * las citas de prueba del Laboratorio (ocultas por defecto: nunca ocupan la
+ * agenda real).
+ */
+function StatusBar({
+  counts,
+  timezone,
+  showCancelled,
+  showTests,
+  onShowCancelled,
+  onShowTests,
+}: {
+  counts: { sessions: number; blocks: number; cancelled: number; tests: number; google: boolean };
+  timezone: string;
+  showCancelled: boolean;
+  showTests: boolean;
+  onShowCancelled: (next: boolean) => void;
+  onShowTests: (next: boolean) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-2 text-xs text-text-3 sm:px-6">
+      <span>
+        <strong className="font-semibold text-text-2">{counts.sessions}</strong>{" "}
+        {counts.sessions === 1 ? "cita" : "citas"}
+        {counts.blocks > 0 && (
+          <>
+            {" · "}
+            <strong className="font-semibold text-text-2">{counts.blocks}</strong>{" "}
+            {counts.blocks === 1 ? "bloqueo" : "bloqueos"}
+          </>
+        )}
+      </span>
+      <span className="hidden xl:inline">
+        Hora del negocio ({timezone})
+        {counts.google && " · Los cambios hechos en Google Calendar no se importan"}
+      </span>
+      <Legend />
+      <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        {(counts.tests > 0 || showTests) && (
+          <div className="flex items-center gap-2">
+            <Switch
+              size="sm"
+              checked={showTests}
+              label="Mostrar pruebas del Laboratorio"
+              onCheckedChange={onShowTests}
+            />
+            <span>Mostrar pruebas{counts.tests > 0 ? ` (${counts.tests})` : ""}</span>
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <Switch
+            size="sm"
+            checked={showCancelled}
+            label="Mostrar canceladas"
+            onCheckedChange={onShowCancelled}
+          />
+          <span>Mostrar canceladas{counts.cancelled > 0 ? ` (${counts.cancelled})` : ""}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Qué significa cada color: sin esto, el ámbar de «no asistió» es adivinanza. */
+function Legend() {
+  const items = [
+    { label: "Agendada", dot: "rounded-full bg-brand" },
+    { label: "Realizada", dot: "rounded-full bg-success" },
+    { label: "No asistió", dot: "rounded-full bg-warning" },
+    // El rayado no se lee en un punto de 10 px: un cuadrito con borde sí.
+    { label: "Bloqueo", dot: "booking-hatch rounded-[3px] border border-text-3" },
+  ];
+  return (
+    <span className="hidden items-center gap-3 lg:flex">
+      {items.map((i) => (
+        <span key={i.label} className="flex items-center gap-1.5">
+          <span aria-hidden className={cn("h-2.5 w-2.5", i.dot)} />
+          {i.label}
+        </span>
+      ))}
+    </span>
   );
 }

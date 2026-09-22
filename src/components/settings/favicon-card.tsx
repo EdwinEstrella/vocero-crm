@@ -77,7 +77,10 @@ export function FaviconCard({ branding }: { branding: Branding }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Icono de la pestaña</CardTitle>
+        <CardTitle>Logo del negocio</CardTitle>
+        <p className="text-sm text-text-3">
+          Se ve en la pestaña del navegador y en la barra lateral del CRM.
+        </p>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center gap-4">
@@ -98,8 +101,8 @@ export function FaviconCard({ branding }: { branding: Branding }) {
             </p>
             <p className="mt-0.5 text-xs text-text-3">
               {actual
-                ? "Reemplaza al generado. Puedes quitarlo para volver a él."
-                : "La inicial sobre tu color de acento. Sube un logo para reemplazarlo."}
+                ? "Reemplaza al generado en la pestaña y en la barra lateral. Puedes quitarlo para volver a él."
+                : "La inicial sobre tu color de acento. Sube tu logo para reemplazarla."}
             </p>
           </div>
         </div>
@@ -136,7 +139,8 @@ export function FaviconCard({ branding }: { branding: Branding }) {
 
         <p className="text-xs text-text-3">
           PNG, SVG, ICO, JPEG o WebP, hasta{" "}
-          {Math.round(MAX_FAVICON_BYTES / 1024)} KB. Cuadrado se ve mejor.
+          {Math.round(MAX_FAVICON_BYTES / 1024)} KB. Cuadrado y con fondo
+          transparente se ve mejor: se dibuja sobre tu color de acento.
         </p>
 
         {error && <p className="text-sm text-destructive">{error}</p>}

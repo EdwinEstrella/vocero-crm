@@ -50,7 +50,8 @@ export const PUT = withAuth(async (session, req: Request) => {
     verifiedName: check.verifiedName,
   });
 
-  // Best-effort: necesaria en modo directo; el modo agencia usa su override.
+  // Best-effort: necesaria en modo directo. Si la WABA ya enruta a un override
+  // (backend de agencia o cerebro externo), se respeta: re-suscribir lo borraría.
   await subscribeAppToWaba(body.data.wabaId, body.data.token);
 
   return Response.json({

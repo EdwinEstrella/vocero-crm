@@ -143,7 +143,9 @@ function voceroFaviconSvg(from: string, to: string): string {
  * el número de versión; para el generado, un hash del nombre y el acento, que
  * son justo lo que lo cambia.
  */
-export function faviconCacheKey(branding: Branding): string {
+export function faviconCacheKey(
+  branding: Pick<Branding, "name" | "accent" | "favicon">
+): string {
   if (branding.favicon) return `u${branding.favicon.version}`;
   let h = 0;
   const semilla = `${branding.name}|${branding.accent}`;
@@ -154,6 +156,8 @@ export function faviconCacheKey(branding: Branding): string {
 }
 
 /** URL que va en el `<link rel="icon">`. */
-export function faviconHref(branding: Branding): string {
+export function faviconHref(
+  branding: Pick<Branding, "name" | "accent" | "favicon">
+): string {
   return `/api/branding/favicon?v=${faviconCacheKey(branding)}`;
 }

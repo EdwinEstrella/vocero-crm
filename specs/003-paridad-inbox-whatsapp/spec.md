@@ -61,10 +61,12 @@ stickers (entrantes sí se muestran), purga programada del volumen de media.
 
 ## Despliegue
 
-- Montar un volumen persistente en el contenedor y apuntar `MEDIA_DIR` ahí
-  (p. ej. `/data/media`). El Dockerfile crea el punto de montaje con el
-  dueño correcto (el volumen nombrado hereda el dueño al montarse vacío; sin
-  esto monta root y el guardado falla con EACCES).
+- Montar un volumen persistente en `/data`: la imagen ya trae
+  `MEDIA_DIR=/data/media`. El Dockerfile crea el punto de montaje con el
+  dueño correcto (un volumen nombrado nuevo lo hereda al montarse vacío) y
+  `vocero-entrypoint.sh` arregla al arrancar los que llegan como root
+  (Coolify, Railway, bind mounts) antes de bajar a `vocero`; sin eso el
+  guardado fallaba con EACCES.
 - Suscribir `smb_message_echoes` en la app de Meta (panel → WhatsApp →
   Webhook fields) para recibir los mensajes manuales.
 

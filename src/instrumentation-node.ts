@@ -1,5 +1,38 @@
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
+import { getEnv } from "@/lib/env";
+
+/**
+ * 008 — Aviso al arranque si MEDIA_DIR no es escribible. Sin esto, el primer
+ * síntoma era un 500 al subir el logo o el icono, o adjuntos entrantes "no
+ * disponibles" (se reintentan al abrirlos, pero solo mientras Meta los
+ * conserve), con el EACCES enterrado en el log de un request. Se prueba
+ * escribiendo de verdad (lo mismo que hará saveMediaFile) y nunca tumba el
+ * arranque: el resto del CRM funciona sin adjuntos.
+ */
+export async function checkMediaDir(): Promise<void> {
+  let dir: string;
+  try {
+    dir = path.resolve(getEnv().MEDIA_DIR);
+  } catch {
+    return; // entorno inválido: lo reporta, con detalle, el primer getEnv() de la app
+  }
+  const probe = path.join(dir, `.prueba-escritura-${process.pid}`);
+  try {
+    await mkdir(dir, { recursive: true });
+    await writeFile(probe, "");
+    await rm(probe, { force: true }).catch(() => {});
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | null)?.code ?? String(err);
+    console.error(
+      `[boot] MEDIA_DIR=${dir} no es escribible (${code}): los adjuntos entrantes, el logo y el icono NO se van a poder guardar. ` +
+        "En Docker: monta un volumen persistente en /data (la imagen ya usa /data/media) y arranca el contenedor como root —el default—, " +
+        "que el entrypoint le da el volumen al usuario de la app. Fuera de Docker: apunta MEDIA_DIR a un directorio escribible."
+    );
+  }
+}
 
 /**
  * Limpieza al arranque (FR-034): corridas del Laboratorio que quedaron

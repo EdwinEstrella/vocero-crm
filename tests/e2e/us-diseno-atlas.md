@@ -57,13 +57,17 @@ con un `curl`. Responde "¿ya se desplegó mi cambio?" sin entrar al servidor.
     ✅ Contraste ≥ 4.5:1 en claro y en oscuro — discreta, no ilegible.
 14. **También en `/api/health`**, para confirmar un despliegue desde un script o
     desde la plataforma de hosting, sin abrir la app ni iniciar sesión.
-    ✅ `{"ok":true,"version":"1.2.0","commit":"8e62d0b"}`.
-15. **El commit se resuelve por dos caminos.** El del build manda; si quien
-    construyó no lo pasó, vale el que la plataforma anuncia en ejecución.
+    ✅ `{"ok":true,"version":"1.2.0","commit":"8e62d0b","commitVerified":true}`.
+15. **El commit se resuelve por dos caminos, y solo uno está verificado.** El
+    del build manda; si quien construyó no lo pasó, vale el que la plataforma
+    anuncia en ejecución — pero marcado como NO verificado (#50).
     ✅ Construir SIN `SOURCE_COMMIT` y arrancar CON él en el entorno enseña el
-    commit igual. Coolify hace exactamente eso, y sin este respaldo la insignia
-    se quedaba solo con la versión — que no se mueve entre despliegues del mismo
-    release, y por tanto no contesta la pregunta.
+    commit igual: sin este respaldo la insignia se quedaba solo con la versión,
+    que no se mueve entre despliegues del mismo release.
+    ✅ …y lo enseña como lo que es: «commit sin verificar» en la insignia y
+    `"commitVerified":false` en `/api/health`. Una variable de entorno escrita a
+    mano una vez se queda quieta mientras la app avanza; presentarla como si
+    saliera del build es la insignia mintiendo (#50, punto 4).
     ✅ Sin ninguno de los dos, se ve solo la versión. Nunca rompe el build.
 
 ## Icono de la pestaña
@@ -89,6 +93,27 @@ pestañas, el icono genérico del navegador las vuelve indistinguibles.
 19. **El navegador suelta el icono viejo.** La URL lleva `?v=`.
     ✅ Cambia al subir, al quitar y al cambiar nombre o acento.
     ✅ Quitar y volver a subir **no repite** una URL ya cacheada.
+
+## Logo en la barra lateral
+
+Automatizado en `scripts/e2e-favicon.mjs`, en la misma corrida que el icono.
+El archivo que sube el dueño es UNO y sirve para las dos cosas: antes solo
+cambiaba la pestaña, y la barra lateral seguía con la inicial.
+
+20. **El logo subido se ve donde se ve la marca**: barra lateral, barra
+    superior del teléfono, login y vista previa de Ajustes → Marca.
+    ✅ El mosaico lo dibuja con la MISMA URL versionada que la pestaña
+    (`?v=u<versión>`): al cambiarlo, la barra no se queda con el anterior.
+    ✅ El login también lo muestra, sin sesión.
+    ✅ Quitarlo devuelve la inicial en la barra, sin imagen rota.
+    ✅ Gana aunque la instancia se llame Vocero: quien sube un archivo quiere
+    verlo en lugar de la "v".
+    ✅ La vista previa de Ajustes → Marca lo sigue al subir y al quitar, sin
+    recargar (la marca llega por prop del servidor, que se refresca).
+21. **Un logo que no es cuadrado no se deforma.** `object-contain` dentro del
+    mosaico; lo que sobra lo rellena el degradado del acento. La tarjeta, que
+    ahora se llama «Logo del negocio», lo advierte: cuadrado y con fondo
+    transparente se ve mejor. (Capturas, no automatizado.)
 
 ## Fidelidad visual (juicio humano pendiente)
 

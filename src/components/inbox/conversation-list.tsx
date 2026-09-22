@@ -11,15 +11,26 @@ import { ContactAvatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
 import { formatTime, previewText } from "./helpers";
 
-/* Puntos de etapa con la paleta de la landing: azul, ámbar, verde WhatsApp. */
+/* Puntos de etapa: los tokens del tema, no hex copiados del tema claro —
+   así siguen al acento white-label y se recalculan en oscuro. */
 const STAGE_DOT: Record<string, string> = {
-  Nuevo: "#8391aa",
-  "En conversación": "#0d5bff",
-  Interesado: "#f2a71b",
-  Cliente: "#1fb35b",
-  Perdido: "#d94a4a",
+  Nuevo: "var(--text-3)",
+  "En conversación": "var(--accent)",
+  Interesado: "var(--warning)",
+  Cliente: "var(--success)",
+  Perdido: "var(--danger)",
 };
-const STAGE_DOT_FALLBACK = "#8391aa";
+const STAGE_DOT_FALLBACK = "var(--text-3)";
+
+/**
+ * Foco por teclado de chips y selector: el anillo de `ui/button`, acento
+ * sólido separado del control (el elegido ya ES del color del acento y un
+ * anillo pegado se fundiría con él). El suave de los campos
+ * (`ring-brand-soft`) queda a ~1.3:1 del fondo: aquí no hay borde que cambie
+ * de color para compensarlo, y se veía menos que el del navegador.
+ */
+const FOCO_SEPARADO =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 function EmptyState({ onSeeded }: { onSeeded: () => void }) {
   const [seeding, setSeeding] = useState(false);
@@ -151,6 +162,7 @@ export function ConversationList({
                     }
                     className={cn(
                       "flex items-center gap-1 rounded-full border py-[3px] pl-[5px] pr-2 text-[11.5px] font-medium transition-colors",
+                      FOCO_SEPARADO,
                       on
                         ? "border-brand bg-brand-veil text-foreground"
                         : "text-text-3 hover:bg-accent",
@@ -168,7 +180,7 @@ export function ConversationList({
             </div>
           )}
         </div>
-        <div className="flex items-center gap-2 rounded-full border border-border-strong bg-background px-3.5 py-[7px] shadow-sm transition-[border-color,box-shadow] focus-within:border-brand focus-within:ring-[3px] focus-within:ring-brand-soft">
+        <div className="flex items-center gap-2 rounded-full border border-border-strong bg-chip px-3.5 py-[7px] shadow-sm transition-[border-color,box-shadow] focus-within:border-brand focus-within:ring-[3px] focus-within:ring-brand-soft">
           <Search className="h-4 w-4 shrink-0 text-text-3" strokeWidth={1.7} />
           <input
             ref={inputRef}
@@ -202,9 +214,10 @@ export function ConversationList({
             onClick={() => setFilter(f.id)}
             className={cn(
               "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-[5px] text-[12.5px] font-semibold transition-colors",
+              FOCO_SEPARADO,
               filter === f.id
                 ? "border-brand bg-brand text-brand-fg"
-                : "border-border-strong bg-background text-text-2 hover:border-text-3"
+                : "border-border-strong bg-chip text-text-2 hover:border-text-3"
             )}
           >
             {f.label}
@@ -226,8 +239,9 @@ export function ConversationList({
             aria-label="Filtrar por etapa del embudo"
             className={cn(
               "ml-auto min-w-0 max-w-[42%] truncate rounded-full border px-2 py-[5px] text-[12.5px] font-semibold transition-colors",
+              FOCO_SEPARADO,
               stage === "all"
-                ? "border-border-strong bg-background text-text-2 hover:border-text-3"
+                ? "border-border-strong bg-chip text-text-2 hover:border-text-3"
                 : "border-brand bg-brand text-brand-fg"
             )}
           >
@@ -264,7 +278,8 @@ export function ConversationList({
                     onClick={() => onSelect(c.id)}
                     className={cn(
                       "flex w-full items-start gap-[11px] px-4 py-[var(--row-py)] text-left transition-colors",
-                      active ? "bg-[var(--bg-active)]" : "hover:bg-subtle"
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                      active ? "bg-[var(--bg-active)]" : "hover:bg-row-hover"
                     )}
                   >
                     <span className="relative shrink-0">
@@ -312,7 +327,7 @@ export function ConversationList({
                       </span>
                       <span className="mt-1.5 flex items-center gap-1.5">
                         {c.stageName && (
-                          <span className="inline-flex items-center gap-1.5 rounded-full border border-border-strong bg-background px-2 py-0.5 text-[11px] font-medium text-text-2">
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-border-strong bg-chip px-2 py-0.5 text-[11px] font-medium text-text-2">
                             <span
                               className="h-[7px] w-[7px] rounded-full"
                               style={{

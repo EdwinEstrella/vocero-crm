@@ -124,7 +124,7 @@ await shoot("/lab", "laboratorio.png", async () => {
 
 await shoot("/settings/branding", "marca.png", async () => {
   await page.getByText("Marca del CRM").waitFor();
-  await page.getByText("Icono de la pestaña").waitFor();
+  await page.getByText("Logo del negocio").waitFor();
 });
 
 await shoot("/settings/whatsapp", "wizard-whatsapp.png", async () => {

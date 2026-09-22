@@ -18,8 +18,12 @@
 4. **move_stage (FR-021)**: inbound "me interesa, lo compro".
    ✅ Respuesta del agente + el lead aparece en "Interesado" en el kanban.
 5. **Handoff por frase (FR-022/SC-006)**: inbound "quiero hablar con un humano".
+   ✅ El cliente recibe UN acuse («te comunico con una persona del equipo»),
+   marcado como IA, ANTES del traspaso — igual que el `farewell` del camino
+   del modelo. Sin él, quien pidió una persona se quedaba sin respuesta.
+   Automatizado en `scripts/e2e-selftest.mjs` (sección FR-022).
    ✅ Badge de atención humana visible en la conversación; la IA queda
-   silenciada (mensajes posteriores NO reciben respuesta).
+   silenciada (mensajes posteriores NO reciben respuesta, ni otro acuse).
    ✅ "Reactivar IA" desde el panel vuelve a activar al agente.
 
 ## Caminos infelices

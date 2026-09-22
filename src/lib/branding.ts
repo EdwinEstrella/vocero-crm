@@ -198,6 +198,13 @@ function accentBlock(selector: string, s: AccentSet): string {
  *
  * El selector va duplicado (`:root:root`) a propósito: así gana en
  * especificidad a los bloques de globals.css sin depender del orden de carga.
+ *
+ * El tercer bloque (`.nav-dark`) es el sidebar: siempre oscuro sin importar
+ * `data-theme`, así que su acento se calcula SIEMPRE con el preset oscuro
+ * (contraste contra `DARK_BG`), no con el que esté activo en el resto de la
+ * página. Al declararse directamente sobre el `<aside>` (no sobre `:root`),
+ * gana para ese elemento y sus hijos sin competir en especificidad con los
+ * otros dos bloques, que solo tocan `<html>`.
  */
 export function accentCssVariables(accentHex: string): string {
   return (
@@ -205,7 +212,8 @@ export function accentCssVariables(accentHex: string): string {
     accentBlock(
       ':root:root[data-theme="dark"]',
       resolveAccentSet(accentHex, "dark")
-    )
+    ) +
+    accentBlock(".nav-dark", resolveAccentSet(accentHex, "dark"))
   );
 }
 

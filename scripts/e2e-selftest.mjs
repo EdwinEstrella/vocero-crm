@@ -116,6 +116,8 @@ async function main() {
   );
   await api("/api/dev/wa-mock/outbox", { method: "DELETE" });
 
+  await overrideChecks();
+
   console.log("\n== us-bsuid: inbound sin wa_id ==");
   const inb1 = await api("/api/dev/wa-mock/inbound", {
     method: "POST",
@@ -471,6 +473,28 @@ async function main() {
     JSON.stringify(ctx.json?.conversation)
   );
 
+  // 015 — `booking` es aditivo y solo existe con la agenda encendida. Un
+  // cerebro lo tolera ausente (no afirma nada sobre citas); lo que no puede
+  // recibir es un bloque vacío en una instancia SIN agenda, porque lo leería
+  // como «este lead no tiene cita».
+  if (/^(on|1|true|si|sí|yes)$/i.test((process.env.AGENDA ?? "").trim())) {
+    const b = ctx.json?.booking;
+    ok(
+      "con la agenda encendida el contexto trae `booking` (sin citas: las tres vacías)",
+      typeof b?.timezone === "string" &&
+        b.next === null &&
+        b.unresolved === null &&
+        b.lastClosed === null,
+      JSON.stringify(b)
+    );
+  } else {
+    ok(
+      "con la agenda apagada el contexto NO trae `booking`, ni vacío",
+      Boolean(ctx.json) && !("booking" in ctx.json),
+      JSON.stringify(Object.keys(ctx.json ?? {}))
+    );
+  }
+
   const ctxByIdentity = await bot(
     `/api/bot/context?waIdentity=${encodeURIComponent(ctx.json.contact.waIdentity)}`
   );
@@ -785,6 +809,104 @@ async function main() {
     `etapa=${detail?.stage?.name} esperada=${firstStage?.name}`
   );
 
+  console.log("\n== FR-022: pedir un humano no deja al cliente en silencio ==");
+  {
+    /**
+     * El patrón de respaldo (antes del modelo) traspasaba SIN mandar nada: el
+     * cliente que escribía «quiero hablar con un humano» no recibía respuesta,
+     * aunque por dentro el traspaso sí ocurría. Lo encontró @fondeur27-09-73
+     * (#62).
+     *
+     * El ai-mock, si le llegara esta frase, traspasaría SIN `farewell` y con
+     * motivo `modelo`. Así que el motivo `cliente` prueba que decidió el
+     * patrón, y el saliente prueba el arreglo: con el bug hay cero mensajes.
+     *
+     * Hay que ENCENDER el agente in-process a propósito, y apagarlo al final
+     * para no alterar lo que sigue.
+     */
+    await api("/api/agent/profile", {
+      method: "PUT",
+      body: JSON.stringify({ enabled: true }),
+    });
+
+    // Contacto nuevo por corrida: con uno fijo, la segunda ejecución lo
+    // encontraría ya traspasado y el agente no llegaría a correr.
+    const CORRIDA = Date.now().toString().slice(-6);
+    const TEL = `5214628${CORRIDA}`;
+    const CANONICO = `524628${CORRIDA}`;
+    const decir = (texto, n) =>
+      api("/api/dev/wa-mock/inbound", {
+        method: "POST",
+        body: JSON.stringify({
+          phoneNumberId: PN,
+          from: TEL,
+          name: "Lead pide humano",
+          text: texto,
+          waMessageId: `wamid.e2e.022.${CORRIDA}.${n}`,
+        }),
+      });
+    const convDe = async () =>
+      ((await api("/api/conversations")).json?.conversations ?? []).find(
+        (c) => c.contact.phone === CANONICO
+      );
+    const salientesDe = async (id) =>
+      ((await api(`/api/conversations/${id}/messages`)).json?.messages ?? []).filter(
+        (m) => m.direction === "out"
+      );
+    const alCliente = async () =>
+      ((await api("/api/dev/wa-mock/outbox")).json?.outbox ?? []).filter(
+        (o) => o.to === CANONICO
+      );
+
+    await decir("quiero hablar con un humano", 1);
+    // Lo que se espera es el TRASPASO; cuánto tarde el debounce no es asunto
+    // del check.
+    await hasta(async () => Boolean((await convDe())?.handoffAt));
+    const conv = await convDe();
+    ok(
+      "decide el patrón de respaldo, antes del modelo (motivo `cliente`)",
+      Boolean(conv?.handoffAt) && conv?.handoffReason === "cliente",
+      JSON.stringify({ handoffAt: conv?.handoffAt, reason: conv?.handoffReason })
+    );
+
+    if (conv) {
+      const salientes = await salientesDe(conv.id);
+      ok(
+        "el cliente recibe un acuse antes del traspaso (antes: cero mensajes)",
+        salientes.length === 1 && /persona del equipo/.test(salientes[0]?.text ?? ""),
+        `salientes=${salientes.length} ${JSON.stringify(salientes.map((m) => m.text))}`
+      );
+      ok(
+        "el acuse queda en la bandeja marcado como IA",
+        salientes[0]?.aiGenerated === true && salientes[0]?.origin === "ai",
+        JSON.stringify({ aiGenerated: salientes[0]?.aiGenerated, origin: salientes[0]?.origin })
+      );
+      const cable = await alCliente();
+      ok(
+        "y salió de verdad por el canal de WhatsApp, al número del cliente",
+        cable.length === 1 && JSON.stringify(cable[0]?.body).includes("persona del equipo"),
+        `envíos=${cable.length}`
+      );
+
+      // Un turno nuevo sobre la conversación YA traspasada: su último
+      // entrante vuelve a ser la frase del patrón, así que si el silencio del
+      // traspaso no mandara, el acuse saldría otra vez.
+      await decir("sigo esperando, quiero hablar con un humano", 2);
+      const coalesce = Number(process.env.AGENT_COALESCE_MS ?? 6000);
+      await sleep(coalesce + 2500);
+      ok(
+        "tras el traspaso la IA calla: el acuse NO se repite",
+        (await salientesDe(conv.id)).length === 1 && (await alCliente()).length === 1,
+        `salientes=${(await salientesDe(conv.id)).length} envíos=${(await alCliente()).length}`
+      );
+    }
+
+    await api("/api/agent/profile", {
+      method: "PUT",
+      body: JSON.stringify({ enabled: false }),
+    });
+  }
+
   console.log("\n== 008: paridad inbox — echoes de coexistence (US1) ==");
   const LEAD = "5214627008001"; // canónica: 524627008001
 
@@ -1083,6 +1205,86 @@ async function main() {
 }
 
 /* ============================================================
+ * us5 — Guardar la conexión respeta el override de un cerebro externo
+ * (tests/e2e/us5-connect.md, paso 7)
+ *
+ * En Meta, `POST {WABA}/subscribed_apps` SIN cuerpo es la forma documentada
+ * de BORRAR el override de callback de la WABA, y el CRM lo mandaba en cada
+ * "Guardar": un cerebro externo (Nea) que recibe los webhooks por ese override
+ * quedaba sordo sin que nada lo avisara. El wa-mock se comporta como Meta, así
+ * que si el CRM vuelve a re-suscribir a ciegas, esto se pone rojo.
+ * ============================================================ */
+
+async function overrideChecks() {
+  console.log("\n== us5: guardar la conexión no desconecta a un cerebro externo ==");
+  const WABA = "WABA-E2E";
+  const NEA = "https://nea.e2e.test/api/webhooks/meta";
+  const graph = `/api/dev/wa-mock/graph/v25.0/${WABA}/subscribed_apps`;
+  const comoMeta = { authorization: "Bearer tok-e2e" };
+
+  const suscripcion = async () =>
+    (await api(graph, { headers: comoMeta })).json?.data ?? [];
+  const overrideActual = async () =>
+    (await suscripcion()).find((app) => app.override_callback_uri)
+      ?.override_callback_uri ?? null;
+  const guardar = (token) =>
+    api("/api/settings/whatsapp", {
+      method: "PUT",
+      body: JSON.stringify({ wabaId: WABA, phoneNumberId: PN, token }),
+    });
+
+  // Modo directo: sin override, guardar suscribe la app, como siempre.
+  let guardado = await guardar("tok-e2e");
+  const trasGuardar = await suscripcion();
+  ok(
+    "sin override, guardar la conexión suscribe la app a la WABA",
+    guardado.res.ok &&
+      trasGuardar.length === 1 &&
+      !trasGuardar[0]?.override_callback_uri,
+    JSON.stringify({ status: guardado.res.status, trasGuardar })
+  );
+
+  // El cerebro externo fija SU override contra Meta (lo que hace Nea).
+  const fijado = await api(graph, {
+    method: "POST",
+    headers: comoMeta,
+    body: JSON.stringify({
+      override_callback_uri: NEA,
+      verify_token: "verify-e2e",
+    }),
+  });
+  ok(
+    "el cerebro externo fija su override en la WABA",
+    fijado.res.ok && (await overrideActual()) === NEA
+  );
+
+  // Rotar el token y guardar otra vez — el caso que lo desconectaba.
+  guardado = await guardar("tok-e2e-rotado");
+  ok(
+    "guardar la conexión con el token rotado responde 200",
+    guardado.res.ok,
+    JSON.stringify(guardado.json)
+  );
+  const despues = await overrideActual();
+  ok(
+    "y el override del cerebro externo SIGUE en la WABA",
+    despues === NEA,
+    `override=${despues}`
+  );
+
+  // Control del propio mock: un POST sin cuerpo SÍ borra el override, como en
+  // Meta. Sin esto, el check anterior podría pasar contra un mock permisivo.
+  await api(graph, { method: "POST", headers: comoMeta });
+  ok(
+    "control: un POST sin cuerpo borra el override (así se comporta Meta)",
+    (await overrideActual()) === null
+  );
+
+  // El resto del guion sigue con la conexión de siempre.
+  await guardar("tok-e2e");
+}
+
+/* ============================================================
  * 015 — Motor de agenda universal (tests/e2e/us-agenda.md)
  *
  * Cubre las dos configuraciones de la bandera, las dos garantías
@@ -1268,6 +1470,38 @@ async function agendaChecks() {
     JSON.stringify(lista.map((b) => ({ id: b.id, source: b.source })))
   );
 
+  /**
+   * El contexto del cerebro SABE de la cita.
+   *
+   * Sin esto un cerebro externo solo conoce la cita por el historial, y en la
+   * edición cloud eso acabó en una segunda cita para quien no llegó a la
+   * primera y en «tu demo es hoy a las 10:30» dicho por la tarde. Nea lee este
+   * bloque tal cual; la raíz no lo mandaba.
+   */
+  const ctxConCita = await bot(`/api/bot/context?conversationId=${convA.id}`);
+  const proxima = ctxConCita.json?.booking?.next;
+  ok(
+    "el contexto del cerebro trae la cita que viene: id, instante UTC y estado",
+    proxima?.id === creada.json?.bookingId &&
+      proxima?.startUtc === elegido &&
+      proxima?.status === "agendada" &&
+      proxima?.endUtc === new Date(Date.parse(elegido) + 30 * 60_000).toISOString(),
+    JSON.stringify(ctxConCita.json?.booking)
+  );
+  ok(
+    "…con la etiqueta del día en palabras, en la zona del negocio",
+    ctxConCita.json?.booking?.timezone === "America/Mexico_City" &&
+      typeof proxima?.label === "string" &&
+      proxima.label.endsWith(`, ${slotsA[0].time}`) &&
+      proxima.label.length > `, ${slotsA[0].time}`.length + 8,
+    `label=${JSON.stringify(proxima?.label)} time=${slotsA[0].time}`
+  );
+  ok(
+    "…y con el enlace que se le dio al cliente",
+    proxima?.meetingLink === SALA && proxima?.linkPending === false,
+    JSON.stringify({ meetingLink: proxima?.meetingLink, linkPending: proxima?.linkPending })
+  );
+
   // GARANTÍA 2: la carrera. B tenía el mismo hueco ofrecido y llega tarde.
   const ofertaB = await bot(
     `/api/bot/availability?conversationId=${convB.id}&limit=12&perDay=3&days=5`
@@ -1337,6 +1571,13 @@ async function agendaChecks() {
       "reprogramar responde 200 (NO 201): no crea un recurso nuevo",
       movida.res.status === 200,
       `status=${movida.res.status}`
+    );
+    const ctxMovida = (await bot(`/api/bot/context?conversationId=${convA.id}`)).json
+      ?.booking?.next;
+    ok(
+      "el contexto sigue a la cita movida: la MISMA cita, en su instante nuevo",
+      ctxMovida?.id === creada.json?.bookingId && ctxMovida?.startUtc === destino.startUtc,
+      JSON.stringify(ctxMovida)
     );
   }
 
@@ -1463,6 +1704,30 @@ async function agendaChecks() {
     "cancelar dos veces no falla (idempotente)",
     cancelada1.res.ok && cancelada2.res.ok,
     `${cancelada1.res.status}/${cancelada2.res.status}`
+  );
+
+  /**
+   * Y el contexto dice que se CANCELÓ, y quién.
+   *
+   * En la edición cloud, sin esto, el agente le contestó a un cliente cuya
+   * demo canceló el equipo «no quedó guardada, por alguna razón»: veía la
+   * cita en el historial y no en el contexto, e inventó el motivo.
+   */
+  const ctxCancelada = (await bot(`/api/bot/context?conversationId=${convA.id}`)).json
+    ?.booking;
+  ok(
+    "cancelada desde el panel, el contexto ya no la da por vigente",
+    Boolean(ctxCancelada) && ctxCancelada.next?.id !== bookingId,
+    JSON.stringify(ctxCancelada?.next)
+  );
+  ok(
+    "…y la trae como cancelada por el equipo, sin enlace",
+    ctxCancelada?.lastClosed?.id === bookingId &&
+      ctxCancelada.lastClosed.status === "cancelada" &&
+      ctxCancelada.lastClosed.cancelledBy === "equipo" &&
+      typeof ctxCancelada.lastClosed.closedAt === "string" &&
+      !("meetingLink" in ctxCancelada.lastClosed),
+    JSON.stringify(ctxCancelada?.lastClosed)
   );
 
   const reintentoInvalido = await api(`/api/bookings/${bookingId}`, {

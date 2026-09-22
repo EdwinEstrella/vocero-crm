@@ -1,16 +1,48 @@
 import { z } from "zod";
-import { parseBody, withAuth } from "@/lib/api";
+import { apiError, parseBody, withAuth } from "@/lib/api";
+import { parseRangeQuery } from "@/lib/time/calendar";
 import { agendaDisabledResponse, agendaEnabled } from "@/server/agenda/flag";
-import { listBookings } from "@/server/agenda/queries";
+import { listBookings, listBookingsInRange } from "@/server/agenda/queries";
+import { getSettings } from "@/server/agenda/settings";
 import { createBlock, createSessionBooking } from "@/server/agenda/service";
 import { bookingErrorResponse, bookingPayload } from "@/server/agenda/http";
 
 export const dynamic = "force-dynamic";
 
-export const GET = withAuth(async (session) => {
+/**
+ * 215 — Con `?from=AAAA-MM-DD&to=AAAA-MM-DD` (días del negocio, inclusivos,
+ * máximo 92), TODAS las citas de ese rango para el calendario, en orden, más
+ * lo que la pantalla necesita para pintarlas: `timezone`, `weeklyHours`,
+ * `range` y `truncated` (tope de seguridad de 3 000).
+ *
+ * Sin parámetros responde EXACTAMENTE lo de siempre (`{ bookings }`, las
+ * últimas 200): es lo que leen los guiones E2E de 015. Un rango que no cuadra
+ * (uno solo de los dos, fecha inexistente, al revés o demasiado largo) es 422
+ * `invalid_range`.
+ */
+export const GET = withAuth(async (session, req: Request) => {
   if (!agendaEnabled()) return agendaDisabledResponse();
-  const bookings = await listBookings(session.organizationId);
-  return Response.json({ bookings });
+  const url = new URL(req.url);
+  const query = parseRangeQuery(url.searchParams.get("from"), url.searchParams.get("to"));
+  if (!query.ok) return apiError(422, "invalid_range", query.message);
+  if (!query.range) {
+    const bookings = await listBookings(session.organizationId);
+    return Response.json({ bookings });
+  }
+
+  const settings = await getSettings(session.organizationId);
+  const { bookings, truncated } = await listBookingsInRange(
+    session.organizationId,
+    query.range,
+    settings
+  );
+  return Response.json({
+    bookings,
+    timezone: settings.timezone,
+    weeklyHours: settings.weeklyHours,
+    range: query.range,
+    truncated,
+  });
 });
 
 const postSchema = z.discriminatedUnion("kind", [
