@@ -4,6 +4,7 @@ import { apiError } from "@/lib/api";
 import { requireBotKey, resolveInstanceOrg } from "@/server/bot/auth";
 import { serializeFicha } from "@/server/bot/ficha";
 import { isWindowOpen, windowRemainingMs } from "@/server/inbox/window";
+import { citasParaContexto } from "@/server/agenda/context";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,8 @@ export const dynamic = "force-dynamic";
  *
  * NO devuelve el historial de mensajes: el bot lleva su propia memoria de la
  * conversación. Lo que aquí sale es lo que solo el CRM sabe — quién es la
- * persona, si un humano tomó el control y si la ventana de 24 h sigue abierta.
+ * persona, si un humano tomó el control y si la ventana de 24 h sigue abierta
+ * (y, con la agenda encendida, qué citas tiene: `booking`).
  */
 export async function GET(req: Request) {
   const denied = requireBotKey(req);
@@ -94,20 +96,23 @@ export async function GET(req: Request) {
     return apiError(404, "not_found", "Conversación no encontrada");
   }
 
-  const leadRows = await db
-    .select({ lead: schema.lead, stage: schema.pipelineStage })
-    .from(schema.lead)
-    .innerJoin(
-      schema.pipelineStage,
-      eq(schema.lead.stageId, schema.pipelineStage.id)
-    )
-    .where(
-      and(
-        eq(schema.lead.organizationId, organizationId),
-        eq(schema.lead.contactId, contact.id)
+  const [leadRows, booking] = await Promise.all([
+    db
+      .select({ lead: schema.lead, stage: schema.pipelineStage })
+      .from(schema.lead)
+      .innerJoin(
+        schema.pipelineStage,
+        eq(schema.lead.stageId, schema.pipelineStage.id)
       )
-    )
-    .limit(1);
+      .where(
+        and(
+          eq(schema.lead.organizationId, organizationId),
+          eq(schema.lead.contactId, contact.id)
+        )
+      )
+      .limit(1),
+    citasParaContexto(organizationId, contact.id),
+  ]);
 
   return Response.json({
     contact: {
@@ -133,5 +138,11 @@ export async function GET(req: Request) {
     lead: leadRows[0]
       ? { id: leadRows[0].lead.id, stageName: leadRows[0].stage.name }
       : null,
+    /**
+     * 015 — Las citas del contacto. FALTA con la agenda apagada (o si no se
+     * pudieron leer): un cerebro que no lo recibe no afirma nada sobre citas,
+     * y uno que no lo lee no cambia. Aditivo.
+     */
+    ...(booking ? { booking } : {}),
   });
 }

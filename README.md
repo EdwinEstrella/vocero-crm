@@ -84,7 +84,7 @@ cualquier otra conversación.
 
 | Endpoint | Para qué |
 |---|---|
-| `GET /api/bot/context` | Quién es la persona, su etapa, si un humano tomó la conversación y si la ventana de 24 h sigue abierta |
+| `GET /api/bot/context` | Quién es la persona, su etapa, si un humano tomó la conversación y si la ventana de 24 h sigue abierta. Con la agenda encendida, también sus citas (`booking`): la próxima, la que ya pasó sin cerrarse y la última que se cerró (cancelada, no asistió o realizada) |
 | `POST /api/bot/messages` | Responder. Sale por el mismo camino que el composer y queda marcado como IA |
 | `GET /api/bot/profile` | El perfil del agente y el knowledge base que editaste en la app |
 | `PUT /api/bot/ficha` | Guardar lo que tu bot descubre del lead (claves libres: cada negocio califica distinto) |
@@ -438,13 +438,27 @@ La versión que está corriendo se ve **abajo en la barra lateral** (`v1.1.0 ·
 
 ```bash
 curl -s https://crm.tudominio.com/api/health
-# {"ok":true,"version":"1.1.0","commit":"8e62d0b"}
+# {"ok":true,"version":"1.1.0","commit":"8e62d0b","commitVerified":true}
 ```
 
-Los dos valores se congelan al **construir**, así que no pueden mentir en
-tiempo de ejecución. El commit lo inyecta Coolify solo; con docker compose se
-pasa con `--build-arg SOURCE_COMMIT=$(git rev-parse HEAD)`, y si falta se ve
-solo la versión.
+La versión sale de `package.json` y se congela al **construir**. El commit,
+solo si llega **al build**: pásalo como build arg `SOURCE_COMMIT` en cada
+despliegue. Con docker compose,
+`docker compose build --build-arg SOURCE_COMMIT=$(git rev-parse HEAD)` y
+luego `docker compose up -d` (sin `--build`, que reconstruiría sin él); en
+Coolify o en cualquier otra plataforma, que el valor llegue como build arg
+`SOURCE_COMMIT`, no solo como variable de entorno. Así queda dentro del
+binario y sale con `"commitVerified":true`.
+
+Si el build no lo trajo, la app enseña el `SOURCE_COMMIT` que encuentre en el
+entorno al arrancar, pero **no lo da por bueno**: en la barra lateral aparece
+como «commit sin verificar» y en el healthcheck con `"commitVerified":false`.
+Es lo que dice la plataforma, no el código, y solo es cierto si ella lo
+actualiza en cada despliegue. Una variable escrita a mano una vez se queda
+quieta mientras la app avanza debajo, y la insignia mostraría un commit que ya
+no corre: una variable fija es peor que dejarla vacía. Sin commit por ningún
+lado se ve solo la versión. Si un script compara commits para confirmar un
+despliegue, que exija `commitVerified: true`.
 
 SemVer sobre lo que le importa a quien opera una instancia:
 

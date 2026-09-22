@@ -57,13 +57,17 @@ con un `curl`. Responde "¿ya se desplegó mi cambio?" sin entrar al servidor.
     ✅ Contraste ≥ 4.5:1 en claro y en oscuro — discreta, no ilegible.
 14. **También en `/api/health`**, para confirmar un despliegue desde un script o
     desde la plataforma de hosting, sin abrir la app ni iniciar sesión.
-    ✅ `{"ok":true,"version":"1.2.0","commit":"8e62d0b"}`.
-15. **El commit se resuelve por dos caminos.** El del build manda; si quien
-    construyó no lo pasó, vale el que la plataforma anuncia en ejecución.
+    ✅ `{"ok":true,"version":"1.2.0","commit":"8e62d0b","commitVerified":true}`.
+15. **El commit se resuelve por dos caminos, y solo uno está verificado.** El
+    del build manda; si quien construyó no lo pasó, vale el que la plataforma
+    anuncia en ejecución — pero marcado como NO verificado (#50).
     ✅ Construir SIN `SOURCE_COMMIT` y arrancar CON él en el entorno enseña el
-    commit igual. Coolify hace exactamente eso, y sin este respaldo la insignia
-    se quedaba solo con la versión — que no se mueve entre despliegues del mismo
-    release, y por tanto no contesta la pregunta.
+    commit igual: sin este respaldo la insignia se quedaba solo con la versión,
+    que no se mueve entre despliegues del mismo release.
+    ✅ …y lo enseña como lo que es: «commit sin verificar» en la insignia y
+    `"commitVerified":false` en `/api/health`. Una variable de entorno escrita a
+    mano una vez se queda quieta mientras la app avanza; presentarla como si
+    saliera del build es la insignia mintiendo (#50, punto 4).
     ✅ Sin ninguno de los dos, se ve solo la versión. Nunca rompe el build.
 
 ## Icono de la pestaña

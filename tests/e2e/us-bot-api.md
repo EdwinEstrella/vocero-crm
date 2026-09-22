@@ -81,6 +81,15 @@ es del bot.
 22. Una conversación del Laboratorio no se resuelve nunca por `waIdentity`: el
     bot de producción no debe hablarle a un cliente simulado.
 
+**Las citas del contacto (015).** Con `AGENDA=on` el contexto trae además
+`booking`: `timezone`, `next` (la próxima agendada), `unresolved` (la que ya
+empezó y nadie cerró, hasta 7 días) y `lastClosed` (la última cerrada en 7
+días). Con la agenda apagada `booking` **no viene**, ni vacío. Es aditivo: un
+bot que no lo lee no cambia. Las citas de prueba no aparecen nunca. La forma
+completa está en
+[`specs/015-motor-agenda-universal/contracts/agenda.md`](../../specs/015-motor-agenda-universal/contracts/agenda.md);
+los casos con citas, en [`us-agenda.md`](us-agenda.md).
+
 ## Ficha de calificación
 
 Lo que el bot va descubriendo del lead. Las claves las define el negocio: el
