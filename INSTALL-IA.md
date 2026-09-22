@@ -7,11 +7,15 @@
 > **Para el humano**: abre tu asistente de IA (p. ej. Claude Code con el MCP de
 > Coolify configurado) en una carpeta vacía, pégale este archivo (o su URL) y
 > responde las 3 preguntas que te hará. **No necesitas clonar el repo ni crear
-> ningún otro archivo**: Coolify construye directo desde GitHub y los secretos
+> ningún otro archivo**: Coolify descarga la imagen publicada y los secretos
 > viven como variables de la plataforma.
 
+**Imagen**: `ghcr.io/kevinrivm/vocero-crm:1.4.0` (GitHub Container Registry,
+una etiqueta por versión, `linux/amd64`, escucha en el puerto `3000`).
+
 **Repositorio**: `https://github.com/kevinrivm/vocero-crm` (público, rama `main`,
-`Dockerfile` en la raíz).
+`Dockerfile` en la raíz). Hace falta para la Ruta B y para construir desde el
+código.
 
 ## Reglas para el asistente
 
@@ -40,7 +44,7 @@
 |---|---|
 | `APP_BASE_URL` | `https://<dominio>` |
 | `DATABASE_URL` | `postgresql://postgres:<POSTGRES_PASSWORD>@<host-postgres>:5432/vocero` |
-| `POSTGRES_PASSWORD` | generado |
+| `POSTGRES_PASSWORD` | generado (es la de la base; la app no la lee, solo va dentro de `DATABASE_URL`) |
 | `BETTER_AUTH_SECRET` | generado |
 | `ENCRYPTION_KEY` | generado (base64, 44 caracteres) |
 | `META_WEBHOOK_VERIFY_TOKEN` | generado |
@@ -51,31 +55,62 @@
 `DOMAIN` solo aplica en la Ruta B (para Caddy). `MEDIA_DIR` no va en la tabla
 a propósito: la imagen ya la trae (`/data/media`, dentro del volumen de `/data`).
 
+Opcionales, que NO se preguntan (el usuario los agrega después; la guía de
+cada uno está en `.env.example`): `META_APP_SECRET`, `BOT_API_KEY` y
+`BRAIN_HEALTH_URL` (un cerebro externo como Nea), `AGENDA=on`,
+`ATRIBUCION=on` y `CHANNELS`.
+
 ## Ruta A — Coolify (con el MCP de Coolify)
 
 1. **Base de datos**: crea un servicio PostgreSQL 16 en el proyecto
    (`database` tipo `postgresql`), con la contraseña generada y base `vocero`.
    Anota su host interno (algo como `<uuid>:5432`).
-2. **Aplicación**: crea una app tipo **repositorio público** apuntando a
-   `https://github.com/kevinrivm/vocero-crm` (rama `main`, build pack
-   `dockerfile`, puerto expuesto `3000`) — no requiere GitHub App ni deploy
-   keys. Asigna el dominio del usuario con HTTPS.
+2. **Aplicación**: en el mismo proyecto, crea una app de tipo **Docker Image**
+   con la imagen `ghcr.io/kevinrivm/vocero-crm`, la etiqueta `1.4.0`, puerto
+   expuesto `3000` y el dominio del usuario con HTTPS (MCP: `application`
+   con `action: create_dockerimage`, el `project_uuid`, el
+   `server_uuid` y el `environment_name` del proyecto,
+   `docker_registry_image_name: ghcr.io/kevinrivm/vocero-crm`,
+   `docker_registry_image_tag: 1.4.0`, `ports_exposes: "3000"`,
+   `domains: https://<dominio>` e `instant_deploy: false`). Coolify descarga
+   la imagen: no hay repositorio, GitHub App ni deploy keys que configurar, ni
+   build en el VPS. No la despliegues todavía: primero el volumen y las
+   variables.
 3. **Almacenamiento persistente**: agrega a la app un volumen montado en
-   **`/data`** (MCP: `storages` con `resource: application`, `action: create`,
-   `type: persistent`, `name: vocero-data`, `mount_path: /data`). Ahí viven
-   los adjuntos, el logo y el icono; la imagen ya trae `MEDIA_DIR=/data/media`,
-   así que **no definas `MEDIA_DIR`**. Que Coolify monte el volumen como root
-   no importa: el contenedor arranca como root solo para dárselo al usuario de
-   la app y luego baja de privilegios. Sin este volumen la app funciona, pero
-   esos archivos se pierden en cada redeploy.
+   **`/data`** (MCP: `storages` con `resource: application`, el `uuid` de la
+   app, `action: create`, `type: persistent`, `name: vocero-data`,
+   `mount_path: /data`). Ahí viven los adjuntos, el logo y el icono; la imagen
+   ya trae `MEDIA_DIR=/data/media`, así que **no definas `MEDIA_DIR`**. Que
+   Coolify monte el volumen como root no importa: el contenedor arranca como
+   root solo para dárselo al usuario de la app y luego baja de privilegios.
+   Sin este volumen la app funciona, pero esos archivos se pierden en cada
+   redeploy.
 4. **Variables**: configura las variables de la tabla en la app (runtime, no
    build). `DATABASE_URL` apunta al host interno del paso 1.
 5. **Sin Pre-Deployment Command**: las migraciones corren solas al arrancar el
    contenedor (`node migrate.mjs && node server.js`).
 6. **Despliega** y espera el healthcheck verde (`/api/health`; el start-period
    cubre las migraciones).
-7. **Verifica**: `https://<dominio>/api/health` responde `{"ok":true}` y
-   `https://<dominio>/login` carga.
+7. **Verifica**: `https://<dominio>/api/health` responde
+   `{"ok":true,"version":"1.4.0",…}` y `https://<dominio>/login` carga.
+
+### Variante: construir desde el código
+
+Para un VPS ARM (p. ej. Ampere o Graviton: la imagen es `linux/amd64` y ahí no
+corre) o para un fork con cambios propios. En el paso 2, en vez de la imagen,
+crea una app tipo **repositorio público** apuntando a
+`https://github.com/kevinrivm/vocero-crm` o al fork (rama `main`, build pack
+`dockerfile`, puerto expuesto `3000`, el dominio del usuario con HTTPS; MCP:
+`application` con `action: create_public`) — no requiere GitHub App ni deploy
+keys. Los pasos 3 a 7 son iguales. El build corre en el VPS y tarda varios
+minutos.
+
+### Actualizar a una versión nueva
+
+Lee antes «Actualizar desde…» de esa versión en `CHANGELOG.md`. Con la app de
+imagen, cambia la etiqueta (`docker_registry_image_tag`) a la versión nueva y
+redespliega; con la variante que construye, redespliega. En los dos casos las
+migraciones corren solas al arrancar.
 
 ## Ruta B — docker compose (VPS con Docker)
 
@@ -83,14 +118,17 @@ a propósito: la imagen ya la trae (`/data/media`, dentro del volumen de `/data`
 git clone https://github.com/kevinrivm/vocero-crm.git vocero && cd vocero
 cp .env.example .env
 # rellena .env con el dominio del usuario y los secretos generados
-docker compose up -d --build
+docker compose up -d
 ```
 
+- `docker compose up -d` descarga la imagen publicada de la versión que fija
+  `docker-compose.yml`. En un VPS ARM o en un fork con cambios propios, usa
+  `docker compose up -d --build`: la construye desde el código.
 - Caddy emite el certificado HTTPS automáticamente con `DOMAIN`.
 - El compose ya monta el volumen `vocero_app_data` en `/data` (adjuntos, logo
   e icono): no hay que definir `MEDIA_DIR`.
 - Verifica: `docker compose ps` (tres servicios healthy) y
-  `https://<dominio>/api/health` → `{"ok":true}`.
+  `https://<dominio>/api/health` → `{"ok":true,"version":"1.4.0",…}`.
 
 ## Cierre (obligatorio decirlo al usuario)
 
@@ -109,6 +147,9 @@ docker compose up -d --build
 
 - App unhealthy al arrancar → revisa logs del contenedor: casi siempre es una
   variable faltante (la validación de entorno lista cuál) o la BD inaccesible.
+- Coolify no puede descargar la imagen → revisa la etiqueta: va sin `v`
+  (`1.4.0`, no `v1.4.0`). En un VPS ARM la imagen no corre: usa la variante
+  que construye desde el código.
 - `ENCRYPTION_KEY` inválida → debe ser EXACTAMENTE 32 bytes en base64
   (44 caracteres): regénérala con `openssl rand -base64 32`.
 - Webhook "no verificado" en Meta → el dominio aún no resuelve o no es https.

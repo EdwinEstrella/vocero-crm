@@ -45,6 +45,16 @@ describe("versión de la app", () => {
     expect(insignia).not.toMatch(/`Vocero \$\{/);
   });
 
+  it("docker compose arranca por defecto la imagen de esta misma versión", () => {
+    // El compose es el único otro lugar con la versión escrita: fija la imagen
+    // publicada. Si package.json sube y el compose no, `docker compose up -d`
+    // corre la versión anterior mientras el código y el CHANGELOG hablan de
+    // la nueva.
+    const compose = readFileSync(path.join(RAIZ, "docker-compose.yml"), "utf8");
+    const imagen = compose.match(/image:\s*\S+:\$\{VOCERO_CRM_VERSION:-([^}\s]+)\}/);
+    expect(imagen?.[1]).toBe(pkg.version);
+  });
+
   it("el Dockerfile acepta el commit sin exigirlo", () => {
     const dockerfile = readFileSync(path.join(RAIZ, "Dockerfile"), "utf8");
     expect(dockerfile).toContain("ARG SOURCE_COMMIT");

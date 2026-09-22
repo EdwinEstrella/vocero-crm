@@ -57,7 +57,13 @@ Tres columnas (conversaciones / hilo / contacto), mensajes entrantes en ≤2
 segundos sin recargar, estados enviado/entregado/leído, ventana de 24 horas
 visible y bloqueada correctamente (con envío de plantilla aprobada cuando está
 cerrada), respuestas del agente marcadas como IA y handoff a humano con un
-click.
+click. Los adjuntos van y vienen (imagen, audio, video, documento, ubicación y
+contacto) con vista previa, y los archivos se guardan en tu propio servidor.
+
+Si la conversación empezó en un anuncio Click-to-WhatsApp, la bandeja dice de
+cuál: «Anuncio · titular» en la lista, un filtro «Anuncios», y en el panel del
+contacto el creativo, el texto y el enlace del anuncio. No pide bandera ni
+credenciales: el dato llega en el mismo webhook.
 
 ### 📊 Contactos y pipeline kanban
 
@@ -75,6 +81,10 @@ qué origen y de qué **anuncio** llegan las conversaciones que terminan en
 venta (con la miniatura del creativo), y qué se está cayendo hoy: leads en
 silencio, mensajes que no llegaron y ventanas de 24 h por cerrarse. Todo sale
 de los datos del propio CRM: no pide conectar nada, y el Laboratorio no cuenta.
+No trae gasto publicitario ni retorno por anuncio, a propósito: ese dato no
+vive en el CRM. Con la agenda encendida suma las citas (realizadas, no
+llegaron, canceladas). Los días se cortan en la zona horaria de la agenda; si
+no hay agenda configurada, en la de Ciudad de México.
 
 ### 🤖 Agente de IA con TU conocimiento
 
@@ -102,10 +112,17 @@ cualquier otra conversación.
 | `POST /api/bot/typing` | Marcar leído y mostrar "escribiendo…" |
 | `GET /api/bot/media/{id}` | Descargar un adjunto entrante sin tocar Meta |
 | `POST /api/bot/reset` | Reiniciar una conversación de pruebas |
+| `GET /api/bot/availability` | Con la agenda encendida: los horarios para ofrecer, que quedan registrados como ofrecidos. Con `date=AAAA-MM-DD`, todas las horas libres de ese día; `query` dice hasta dónde llega lo consultado |
+| `POST` · `PATCH /api/bot/bookings` | Con la agenda encendida: reservar (201) o mover (200) una cita, solo en un horario que se ofreció |
 
 Los 409 vienen tipados (`ai_paused`, `window_closed`, `sandbox_violation`) para
 que tu bot sepa si callarse, mandar plantilla o rendirse. El guion de pruebas
 está en [`tests/e2e/us-bot-api.md`](tests/e2e/us-bot-api.md).
+
+La API primero revisa la llave y después cuenta: con la llave buena caben 1200
+llamadas por minuto; sin llave o con una mala, 30 por minuto desde la misma IP
+responden `401` y las siguientes `429` («Demasiados intentos fallidos»). Quien
+inunde la API sin llave no deja a tu bot sin servicio.
 
 Si tu bot recibe los webhooks de Meta por un **override de callback de la
 WABA**, guardar la conexión en Configuración → WhatsApp (o rotar el token) lo
@@ -132,6 +149,12 @@ no se negocian: **solo se reserva un horario que se ofreció** (nada de que el
 modelo invente un martes a las 10) y **nunca se confirma una cita que no se
 creó** — si el hueco se ocupó a media conversación, la respuesta trae
 alternativas frescas en vez de una promesa falsa.
+
+Las citas se ven en la pestaña **Citas** como un calendario: Día, Semana, Mes y
+Lista, siempre en la zona horaria del negocio aunque abras el CRM desde otra.
+Tocas una cita y desde su panel abres la conversación, la reprogramas, la
+marcas realizada o «no asistió», o la cancelas; tocas un hueco vacío de la
+rejilla y bloqueas ese horario.
 
 Cómo se entrega la reunión lo eliges tú, con un **conector**:
 
@@ -171,6 +194,16 @@ conversación. La bandeja lo marca («Anuncio · titular», con su filtro) y el
 panel del contacto y el cajón del trato enseñan el creativo, el texto y el
 enlace del anuncio, en cualquier instancia que reciba un clic de un anuncio.
 
+### 🎨 Tu marca, en claro y en oscuro
+
+En Configuración → Marca le pones al CRM el nombre de tu negocio, su color y su
+logo; el logo se ve en la barra lateral, en el login y en la pestaña del
+navegador. La barra lateral es azul marino en los dos temas, y cada quien
+elige claro u oscuro en su navegador. En oscuro, la página, la barra y lo que
+flota encima se distinguen, y el texto pasa el contraste AA. Con un color
+propio, los tonos derivados y la tinta de los botones se calculan solos para
+que se lean.
+
 ### 📄 Plantillas · 👥 Multi-usuario · 🔐 Self-hosted
 
 Plantillas con varias variables `{{1}}…{{n}}` y aprobación de Meta
@@ -182,13 +215,21 @@ Meta y tu proveedor LLM opcional.
 
 ## Requisitos
 
-- Un VPS con Docker (2 GB de RAM bastan) — con o sin [Coolify](https://coolify.io).
+- Un VPS con Docker (2 GB de RAM bastan para correr la imagen publicada) — con
+  o sin [Coolify](https://coolify.io). La imagen es `linux/amd64`; en un VPS
+  ARM construyes desde el código, que tarda varios minutos y pide más memoria.
 - Un dominio apuntando al VPS (Meta exige **https** para webhooks).
 - Un número de WhatsApp en la Cloud API de Meta (ver [Conexión](#conexión-del-número-de-whatsapp)).
 - Opcional: una API key de [OpenRouter](https://openrouter.ai) (o cualquier
   proveedor compatible) para el agente y el Laboratorio.
 
 ## Instalación (~15 minutos)
+
+Cada versión se publica como imagen de Docker:
+`ghcr.io/kevinrivm/vocero-crm:<versión>` (p. ej. `1.4.0`). Instalar desde
+la imagen es el camino recomendado: tu servidor la descarga en vez de
+construirla. Construir desde el código sigue funcionando, y es lo que
+necesitas en un VPS ARM o si tu fork cambia el código.
 
 ### 0. Apunta tu dominio
 
@@ -199,19 +240,43 @@ que resuelva.
 
 Abre tu asistente de IA (p. ej. Claude Code con el MCP de Coolify), pásale el
 archivo [`INSTALL-IA.md`](INSTALL-IA.md) y responde 3 preguntas (dominio, token
-de OpenRouter opcional, ruta). El asistente crea la base de datos y la app,
-genera los secretos y verifica el healthcheck.
+de OpenRouter opcional, ruta). El asistente crea la base de datos y una app de
+tipo «Docker Image» con la imagen de la versión, le monta el volumen de
+`/data`, genera los secretos y verifica el healthcheck. La misma guía trae la
+variante que construye desde el repositorio.
 
 ### Ruta B — docker compose
 
 ```bash
 git clone https://github.com/kevinrivm/vocero-crm.git vocero && cd vocero
 cp .env.example .env    # rellena: dominio + secretos (cada uno trae su comando openssl)
-docker compose up -d --build
+docker compose up -d
 ```
 
+`docker-compose.yml` declara las dos cosas: la imagen publicada (`image`) y el
+código (`build: .`). Sin `pull_policy`, la
+[especificación de Compose](https://docs.docker.com/reference/compose-file/build/#using-build-and-image)
+dice qué pasa: intenta primero descargar la imagen y solo la construye desde el
+código si no la encuentra ni en el registro ni en tu máquina. Así que:
+
+- `docker compose up -d` corre la imagen publicada de la versión que fija el
+  compose. Para otra versión publicada, `VOCERO_CRM_VERSION=X.Y.Z` en tu
+  `.env`.
+- `docker compose up -d --build` la construye desde tu copia del código. Es lo
+  que necesitas en un VPS ARM y en un fork con cambios propios; en el fork,
+  úsalo siempre: lo que construyes queda con el mismo nombre de imagen, y sin
+  `--build` Compose puede correr la oficial en vez de tus cambios.
+
 Caddy emite el certificado HTTPS solo. Verifica con
-`https://crm.tudominio.com/api/health` → `{"ok":true}`.
+`https://crm.tudominio.com/api/health` → `{"ok":true,"version":"1.4.0",…}`.
+
+### Actualizar
+
+Antes, lee en [`CHANGELOG.md`](CHANGELOG.md) la sección «Actualizar desde…» de
+la versión nueva. Con docker compose: `git pull` y `docker compose up -d` (con
+`--build` si tu fork tiene cambios propios). En Coolify: cambia la etiqueta de
+la imagen a la versión nueva y redespliega; si construyes desde el
+repositorio, redespliega. Las migraciones corren solas al arrancar.
 
 ### Primer arranque
 
@@ -426,8 +491,11 @@ abierta? Revisa también los logs de la instancia.
 **`ENCRYPTION_KEY` inválida al arrancar** — Debe ser exactamente 32 bytes en
 base64 (44 caracteres): `openssl rand -base64 32`.
 
-**La app arranca pero /api/health falla** — La base de datos no está lista o
-`DATABASE_URL` apunta mal; revisa los logs (`docker compose logs app`).
+**La app arranca pero /api/health falla** — La base de datos no está lista,
+`DATABASE_URL` apunta mal o alguna variable obligatoria no pasa la
+validación (p. ej. una `ENCRYPTION_KEY` mal generada): el healthcheck
+responde 503 en los tres casos. Revisa los logs (`docker compose logs app`); el de arranque nombra la
+variable que falló.
 
 **Subir el logo o el icono da error, o los adjuntos no se ven** — La app no
 puede escribir en `MEDIA_DIR` (`/data/media` en la imagen), y el log de
@@ -466,11 +534,14 @@ curl -s https://crm.tudominio.com/api/health
 ```
 
 La versión sale de `package.json` y se congela al **construir**. El commit,
-solo si llega **al build**: pásalo como build arg `SOURCE_COMMIT` en cada
-despliegue. Con docker compose,
+solo si llega **al build**. La imagen publicada ya lo trae (se construye con
+el commit del tag), así que con ella `/api/health` responde
+`"commitVerified":true` sin hacer nada. Si construyes desde el código, pásalo
+como build arg `SOURCE_COMMIT` en cada despliegue. Con docker compose,
 `docker compose build --build-arg SOURCE_COMMIT=$(git rev-parse HEAD)` y
-luego `docker compose up -d` (sin `--build`, que reconstruiría sin él); en
-Coolify o en cualquier otra plataforma, que el valor llegue como build arg
+luego `docker compose up -d --pull never` (sin `--build`, que reconstruiría
+sin él, y sin descargar la imagen publicada en lugar de la tuya); en Coolify o
+en cualquier otra plataforma, que el valor llegue como build arg
 `SOURCE_COMMIT`, no solo como variable de entorno. Así queda dentro del
 binario y sale con `"commitVerified":true`.
 
@@ -492,15 +563,21 @@ SemVer sobre lo que le importa a quien opera una instancia:
 | **Menor** (`1.2.0`) | Funciones nuevas. Actualizar es redesplegar. |
 | **Parche** (`1.1.1`) | Arreglos y ajustes. Actualizar es redesplegar. |
 
-La versión vive en `package.json` y se sube en el PR que publica el cambio.
+La versión vive en `package.json` y se sube en el PR que publica el cambio,
+junto con el default de `VOCERO_CRM_VERSION` en `docker-compose.yml` (una
+prueba exige que coincidan) y su entrada en [`CHANGELOG.md`](CHANGELOG.md),
+que dice qué trae cada versión y qué hacer para actualizar. Al crear el tag
+`vX.Y.Z`, el CI publica la imagen `ghcr.io/kevinrivm/vocero-crm:X.Y.Z`.
 
 ## Roadmap
 
-- Multimedia completa en la bandeja (hoy: indicador de tipo).
+- Adjuntos en Instagram y Messenger (hoy esos canales son de texto; en
+  WhatsApp ya van y vienen con vista previa).
 - RAG para knowledge bases grandes (hoy: se inyecta completo con aviso de tamaño).
 - Personas configurables del Laboratorio y comparativas entre corridas.
 - Borrado de plantillas desde la app.
-- Analytics de conversación y plantillas.
+- Métricas de plantillas (las de ventas, origen y conversaciones ya están en
+  Resultados).
 - Broadcast con opt-in verificado.
 
 ### Antes fuera de alcance, ahora detrás de una bandera
