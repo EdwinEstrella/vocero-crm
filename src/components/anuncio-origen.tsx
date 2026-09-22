@@ -6,6 +6,41 @@ import type { AnuncioDto } from "@/lib/types";
 import { etiquetaDeOrigen, titularDeOrigen } from "@/lib/anuncios";
 
 /**
+ * 019 — Miniatura del creativo para listas y tablas (Resultados). Sin imagen,
+ * o si deja de servirse, queda el megáfono en el mismo hueco para que las filas
+ * no bailen.
+ */
+export function MiniaturaDeAnuncio({
+  imageAssetId,
+  alt,
+}: {
+  imageAssetId: string | null;
+  alt: string;
+}) {
+  const [rota, setRota] = useState(false);
+  if (!imageAssetId || rota) {
+    return (
+      <span
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded border bg-subtle text-text-3"
+        aria-hidden
+      >
+        <Megaphone className="h-4 w-4" strokeWidth={1.7} />
+      </span>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- adjunto privado servido con sesión; no hay host que optimizar
+    <img
+      src={`/api/media/${imageAssetId}`}
+      alt={alt}
+      loading="lazy"
+      onError={() => setRota(true)}
+      className="h-9 w-9 shrink-0 rounded border bg-background object-cover"
+    />
+  );
+}
+
+/**
  * 018 — De qué anuncio llegó esta persona.
  *
  * La misma tarjeta en la bandeja y en el cajón del trato: la pregunta "¿quién
