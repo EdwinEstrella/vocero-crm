@@ -73,7 +73,11 @@ export function BotSection({
                 <p className="text-sm text-text-3">Ninguna cita cae en este periodo.</p>
               ) : (
                 <div className="grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-5">
-                  <StatCard label="Agendadas" value={String(data.sessions.booked)} />
+                  <StatCard
+                    label="Citas"
+                    value={String(data.sessions.booked)}
+                    hint={pendientes(data.sessions)}
+                  />
                   <StatCard label="Realizadas" value={String(data.sessions.done)} />
                   <StatCard label="No llegaron" value={String(data.sessions.noShow)} />
                   <StatCard label="Canceladas" value={String(data.sessions.cancelled)} />
@@ -123,6 +127,13 @@ export function BotSection({
       )}
     </Section>
   );
+}
+
+/** Las citas del periodo que todavía no tienen desenlace (siguen agendadas). */
+function pendientes(s: NonNullable<BotBlockDto["sessions"]>): string | undefined {
+  const n = s.booked - s.done - s.noShow - s.cancelled;
+  if (n <= 0) return undefined;
+  return n === 1 ? "1 sin desenlace todavía" : `${n} sin desenlace todavía`;
 }
 
 /** Segundos en algo que se lee de un vistazo. */
