@@ -25,7 +25,9 @@ const config: Config = {
         border: "var(--border)",
         "border-strong": "var(--border-strong)",
         input: "var(--border-strong)",
-        ring: "var(--accent)",
+        // En claro es el acento; en oscuro, su variante aclarada: el acento
+        // sólido queda bajo 3:1 sobre la fila seleccionada y los diálogos.
+        ring: "var(--ring)",
         background: "var(--bg)",
         foreground: "var(--text)",
         subtle: "var(--bg-subtle)",
@@ -53,8 +55,10 @@ const config: Config = {
           DEFAULT: "var(--bg)",
           foreground: "var(--text)",
         },
+        // Lo que flota (diálogos, cajones, menús): en oscuro, un escalón
+        // arriba de la página para que se despegue; en claro, el mismo blanco.
         popover: {
-          DEFAULT: "var(--bg)",
+          DEFAULT: "var(--bg-raised)",
           foreground: "var(--text)",
         },
         brand: {
@@ -64,6 +68,8 @@ const config: Config = {
           tint: "var(--accent-tint)",
           text: "var(--accent-text)",
           fg: "var(--accent-fg)",
+          // El acento como texto (una hora, un enlace): legible en los dos temas.
+          ink: "var(--accent-ink)",
           veil: "var(--accent-veil)",
         },
         "text-2": "var(--text-2)",

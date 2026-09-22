@@ -162,7 +162,9 @@ export function ContactPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="sticky top-0 flex items-center justify-between border-b bg-background px-4 py-3">
+      {/* Por debajo de xl el panel flota (bg-popover, ver InboxClient): su
+          cabecera va del mismo tono para no dejar una franja más oscura. */}
+      <header className="sticky top-0 flex items-center justify-between border-b bg-background px-4 py-3 max-xl:bg-popover">
         <h3 className="kicker text-text-2">Detalles</h3>
         <button
           onClick={onClose}

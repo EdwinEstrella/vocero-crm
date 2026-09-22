@@ -117,7 +117,7 @@ export function LeadDrawer({
         role="dialog"
         aria-modal="true"
         aria-label={`Trato de ${lead.contact.name}`}
-        className="fixed inset-y-0 right-0 z-50 flex w-[min(360px,92vw)] flex-col border-l bg-background shadow-pop"
+        className="fixed inset-y-0 right-0 z-50 flex w-[min(360px,92vw)] flex-col border-l bg-popover shadow-pop"
       >
         <header className="flex items-center justify-between border-b px-4 py-3">
           <h3 className="kicker text-text-2">

@@ -55,8 +55,9 @@ const AGENDA_ITEM: NavItem = {
 /**
  * Un renglón del menú, como el `side-item` del mockup de la landing: texto
  * semibold, esquinas de 9px y, activo, lavado del acento con tinta azul.
+ * Exportado para la vista previa de Configuración → Marca, que pinta la barra.
  */
-function navItemClass(active: boolean) {
+export function navItemClass(active: boolean) {
   return cn(
     "flex items-center gap-[10px] rounded-sm px-2.5 py-2.5 text-[13.5px] font-semibold transition-colors lg:py-2",
     // Acento sólido: dentro de `.nav-dark` es el calculado para fondo oscuro,

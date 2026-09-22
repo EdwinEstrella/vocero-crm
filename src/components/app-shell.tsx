@@ -14,8 +14,8 @@ import { BrandLogo } from "@/components/brand-mark";
  *
  * - Escritorio (lg+): el panel lateral es una columna fija, como siempre.
  * - Móvil/tableta: el lateral sale de la izquierda como cajón sobre un velo,
- *   y arriba queda una barra con el hamburguesa y la marca. El cajón se cierra
- *   solo al navegar (el `pathname` cambia) y con Escape.
+ *   y arriba queda una barra azul marino con el hamburguesa y la marca. El
+ *   cajón se cierra solo al navegar (el `pathname` cambia) y con Escape.
  *
  * La altura usa `100dvh` (no `100vh`) porque en el navegador móvil la barra de
  * direcciones se encoge al hacer scroll: con `vh` el compositor de la Bandeja
@@ -81,7 +81,9 @@ export function AppShell({
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center gap-1.5 border-b bg-subtle px-2 lg:hidden">
+        {/* Misma pieza que la barra lateral (`nav-dark`): en el teléfono la
+            franja azul marino de arriba es lo que queda del bicolor. */}
+        <header className="nav-dark flex h-12 shrink-0 items-center gap-1.5 border-b bg-subtle px-2 text-foreground lg:hidden">
           <button
             onClick={() => setNavOpen(true)}
             aria-label="Abrir el menú"

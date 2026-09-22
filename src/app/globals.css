@@ -22,6 +22,9 @@
     --bg-subtle: #f6f8fc;
     --bg-panel: #eef2f9;
     --bg-hover: #e9eef8;
+    /* Lo que flota sobre la página: diálogos, cajones, menús. En claro es el
+       mismo blanco de siempre; en oscuro se aclara para despegarse. */
+    --bg-raised: #ffffff;
     --text: #0a1730;
     --text-2: #42506b;
     --text-3: #8391aa;
@@ -51,6 +54,11 @@
     --accent-tint: #ebf1ff;
     --accent-text: #0038d8;
     --accent-fg: #ffffff;
+    /* El acento como TINTA (una hora, un enlace) y como anillo de foco. En
+       claro son el acento mismo; en oscuro, sus variantes aclaradas: el
+       acento sólido es para rellenos y ahí no alcanza AA como texto. */
+    --accent-ink: var(--accent);
+    --ring: var(--accent);
     /* Velo translúcido ENCIMA del acento (contadores dentro de un chip). */
     --accent-veil: rgba(255, 255, 255, 0.22);
     --bg-active: var(--accent-tint);
@@ -94,67 +102,80 @@
     --row-py: 11px;
   }
 
+  /*
+    Tema oscuro v2 (R8). Tres niveles que se leen de un vistazo, como en claro:
+    la barra lateral (azul marino fijo, ver `.nav-dark`) es lo más oscuro; la
+    página va un escalón ARRIBA de ella (≥ 1.25:1, si no el bicolor
+    desaparece) y lo que flota (diálogos, cajones) otro más. Antes todo vivía
+    entre #070e20 y #131f3d: barra y página a 1.04:1 y las sombras no se
+    veían. Los pisos de contraste los vigila tests/unit/contraste-temas.test.ts.
+  */
   :root[data-theme="dark"] {
     color-scheme: dark;
 
-    /* Neutros: el azul marino de las secciones oscuras de la landing */
-    --bg: #0b1327;
-    --bg-subtle: #070e20;
-    --bg-panel: #131f3d;
-    /* 215 — --bg-subtle apenas se separa de --bg (1.04:1) y el horario del
-       negocio no se distinguía en la rejilla: un paso más oscuro (≈1.08:1,
-       lo mismo que separa --bg-subtle de --bg en claro). */
-    --cal-off: #040a18;
-    --bg-hover: #182750;
+    /* Escalera de superficies, de la más honda a la más alta. --bg-subtle es
+       el hueco (hilo del chat, columnas del pipeline, fuera de horario), como
+       el papel gris del tema claro. */
+    --bg-subtle: #141c30;
+    --bg: #1c263c;
+    --row-hover: #212c45;
+    --bg-raised: #222d47;
+    --chip-bg: #26334d;
+    --bg-panel: #2c3a57;
+    --bg-hover: #2f3d5e;
+    /* 215 — Lo no hábil del calendario: el mismo hueco que en claro. */
+    --cal-off: #141c30;
     --text: #e8eefc;
-    --text-2: #a9b8dc;
-    --text-3: #7688b0;
-    --text-4: #55648a;
-    /* 214 — Bordes con contraste ≥ 1.6:1 contra --bg (antes 1.26: las tres
-       columnas de la bandeja se fundían en un solo azul marino). */
-    --border: #263866;
-    --border-strong: #34498a;
-    --chip-bg: #142040;
-    --row-hover: #111b36;
+    --text-2: #bac6e3;
+    /* ≥ 4.5:1 incluso sobre el hover más claro: la `.kicker` mide 10.5px. */
+    --text-3: #9aa9ca;
+    /* Solo iconos y deshabilitado (≥ 3:1), nunca texto de lectura. */
+    --text-4: #7888ad;
+    /* Bordes ≥ 1.6:1 contra la página (214) y ≥ 1.4:1 contra lo que flota. */
+    --border: #36476f;
+    --border-strong: #4a5d8e;
 
     /* Chat */
-    --chat-bg: #070e20;
-    --bubble-in: #0f2419;
-    --bubble-in-border: #1c3b2a;
+    --chat-bg: #141c30;
+    --bubble-in: #173d2c;
+    --bubble-in-border: #2a5e45;
 
-    /* Acento: respaldo con el azul Vocero ya aclarado para fondo oscuro; el
+    /* Acento: respaldo con el azul Vocero calculado para este fondo; el
        white-label lo recalcula (ver resolveAccentSet en lib/branding). */
     --accent: #256bff;
     --accent-hover: #4883ff;
-    --accent-soft: #122c64;
-    --accent-tint: #0e1e41;
-    --accent-text: #6294ff;
+    --accent-soft: #1f3f82;
+    --accent-tint: #1e3567;
+    --accent-text: #6f9eff;
     --accent-fg: #ffffff;
+    --accent-ink: var(--accent-text);
+    --ring: var(--accent-hover);
     --accent-veil: rgba(0, 0, 0, 0.22);
 
-    /* Estado sobre fondo oscuro */
+    /* Estado sobre fondo oscuro: el tono puro oscurecido (no mezclado con el
+       azul marino, que lo vuelve gris), un escalón arriba de --bg. */
     --success: #4fd07f;
-    --success-tint: #0f2418;
-    --success-soft: #1c3d29;
+    --success-tint: #183e26;
+    --success-soft: #28683f;
     --success-text: #7fe0a3;
 
     --warning: #f5b74a;
-    --warning-tint: #2a1f0c;
-    --warning-soft: #4a3714;
+    --warning-tint: #453315;
+    --warning-soft: #765824;
     --warning-text: #f7c86f;
 
     --danger: #ef6b6b;
-    --danger-tint: #2a1216;
-    --danger-soft: #4a1f26;
+    --danger-tint: #562727;
+    --danger-soft: #843b3b;
     --danger-text: #f59a9a;
     --danger-fg: #1b0d10;
 
     --info: #6a9dff;
-    --info-tint: #101c3a;
-    --info-soft: #1d3468;
+    --info-tint: #243557;
+    --info-soft: #3a568c;
     --info-text: #9dbbff;
 
-    --overlay: rgba(2, 8, 24, 0.74);
+    --overlay: rgba(2, 8, 24, 0.72);
     --knob: #dfe6fa;
 
     /* Sombras: sobre oscuro necesitan más negro para leerse */
@@ -166,17 +187,23 @@
 
   /*
     Sidebar: azul marino fijo, sin importar el tema claro/oscuro del resto de
-    la app (como el lateral de la landing). Redeclara los mismos neutros del
-    tema oscuro directamente sobre el `<aside>` (ver AppNav) para que las
-    clases que ya usa (bg-subtle, border, text-2, text-3, hover:bg-accent…)
-    hereden estos valores en vez de los de `:root`. El acento (--accent*, para
-    el ítem activo y el avatar) lo fija por separado `accentCssVariables` en
-    lib/branding.ts, porque depende del white-label de cada organización.
+    la app (como el lateral de la landing). Redeclara sus neutros directamente
+    sobre el `<aside>` (ver AppNav) y la barra superior del teléfono, para que
+    las clases que ya usan (bg-subtle, border, text-2, text-3,
+    hover:bg-accent…) hereden estos valores en vez de los de `:root`.
+
+    Son SUS valores, no una copia de los del tema oscuro: la página oscura
+    vive un escalón arriba (≥ 1.25:1) para que el bicolor no desaparezca, y la
+    barra se ve idéntica en los dos temas. El acento (--accent*, para el ítem
+    activo y el avatar) lo fija por separado `accentCssVariables` en
+    lib/branding.ts, calculado contra ESTE fondo (NAV_BG).
   */
   .nav-dark {
+    color-scheme: dark;
     --bg: #0b1327;
     --bg-subtle: #070e20;
     --bg-panel: #131f3d;
+    --bg-raised: #131f3d;
     --bg-hover: #182750;
     --text: #e8eefc;
     --text-2: #a9b8dc;
@@ -186,6 +213,8 @@
     --border-strong: #34498a;
     --chip-bg: #142040;
     --row-hover: #111b36;
+    --accent-ink: var(--accent-text);
+    --ring: var(--accent);
     --shadow-pop: 0 30px 80px -20px rgba(0, 0, 0, 0.75),
       0 8px 24px -12px rgba(0, 0, 0, 0.5);
   }

@@ -101,7 +101,7 @@ export function NewContactDialog({
       <div
         role="dialog"
         aria-label="Nuevo contacto"
-        className="w-full max-w-md rounded-lg border bg-card p-5 shadow-xl"
+        className="w-full max-w-md rounded-lg border bg-popover p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="mb-1 font-semibold">Nuevo contacto</h3>

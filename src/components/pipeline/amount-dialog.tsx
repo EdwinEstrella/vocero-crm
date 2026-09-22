@@ -47,7 +47,7 @@ export function AmountDialog({
       aria-modal="true"
       aria-label="Monto y prioridad"
     >
-      <div className="w-full max-w-sm rounded-lg border bg-card p-4 shadow-pop">
+      <div className="w-full max-w-sm rounded-lg border bg-popover p-4 shadow-pop">
         <h3 className="font-semibold">Monto y prioridad</h3>
         <p className="mt-0.5 text-xs text-text-3">{leadName}</p>
 

@@ -86,7 +86,7 @@ export function MonthGrid({
                 className={cn(
                   "mx-auto flex h-6 min-w-6 items-center justify-center rounded-full px-1 text-[12.5px] font-semibold tabular-nums hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-soft",
                   isToday && "bg-brand text-brand-fg hover:bg-brand-hover",
-                  !isToday && outside && "text-text-4",
+                  !isToday && outside && "text-text-3",
                   !isToday && !outside && "text-foreground"
                 )}
               >

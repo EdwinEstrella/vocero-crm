@@ -96,7 +96,7 @@ export function BookingDrawer({
       <aside
         role="dialog"
         aria-label={`${isSession ? "Cita" : "Bloqueo"}: ${bookingTitle(b)}`}
-        className="fixed inset-y-0 right-0 z-50 flex w-[min(400px,94vw)] flex-col border-l bg-background shadow-pop lg:static lg:z-auto lg:w-[360px] lg:shrink-0 lg:shadow-none"
+        className="fixed inset-y-0 right-0 z-50 flex w-[min(400px,94vw)] flex-col border-l bg-popover shadow-pop lg:static lg:z-auto lg:w-[360px] lg:shrink-0 lg:shadow-none"
       >
         <header className="flex items-center justify-between border-b px-4 py-3">
           <h3 className="kicker text-text-2">{isSession ? "Cita" : "Bloqueo de horario"}</h3>
