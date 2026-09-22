@@ -14,9 +14,9 @@ reconectar. Respalda la base antes, como en cualquier actualización.
 
 - **Cómo.** En Coolify, con la app que construye desde el repo (la de la guía
   hasta 1.3.0), redespliega. Con docker compose, `git pull` y
-  `docker compose up -d`: el compose ahora descarga la imagen publicada, y con
-  `--build` la sigue construyendo desde el código (lo que quieres si tu fork
-  tiene cambios propios).
+  `docker compose up -d`: el compose ahora descarga la imagen publicada. Con
+  `--build` la sigue construyendo desde el código, que es lo que necesitas en
+  un VPS ARM (la imagen es `linux/amd64`) o si tu fork tiene cambios propios.
 - **Migraciones.** Corren solas al arrancar el contenedor, sin
   Pre-Deployment Command. Hay dos nuevas, y las dos solo agregan:
   - `0013_nombre_del_contacto`: la columna `contact.name_source`.
@@ -45,13 +45,13 @@ reconectar. Respalda la base antes, como en cualquier actualización.
   escriba entre el arranque y el `UPDATE` ya habrá tomado su nombre de perfil.
 - **Adjuntos, logo e icono.** La imagen los guarda en `/data/media` (trae
   `MEDIA_DIR=/data/media`) y arranca como root solo para darle el volumen de
-  `/data` al usuario de la app. Qué hacer según cómo esté tu instancia:
+  `/data` al usuario de la app. Qué hacer según cómo esté tu contenedor:
 
   | Tu instancia en 1.3.0 | Qué hacer |
   |---|---|
-  | Sin volumen, y sin `MEDIA_DIR` o con `MEDIA_DIR=./.dev-media` (la guía y el `.env.example` de 1.3.0) | Quita `MEDIA_DIR` si la tienes y monta un volumen en `/data` (en Coolify, un persistent storage). No hay nada que rescatar: esa ruta no era escribible y guardar un adjunto, el logo o el icono fallaba. |
+  | `MEDIA_DIR` sin definir o `./.dev-media` (la guía y el `.env.example` de 1.3.0) | Quita `MEDIA_DIR` si la tienes y monta un volumen en `/data` si aún no hay (en Coolify, un persistent storage). No hay nada que rescatar: esa ruta no era escribible y guardar un adjunto, el logo o el icono fallaba. |
   | Volumen en `/data/media`, con `MEDIA_DIR=/data/media` (la nota del `.env.example` de 1.3.0) | No muevas el volumen: 1.4.0 usa esa misma ruta y le arregla los permisos al arrancar. `MEDIA_DIR` ya sobra. Para montarlo en `/data`, como dice la guía nueva, primero pasa su contenido a una carpeta `media/` dentro del volumen. |
-  | `MEDIA_DIR=/data/media` sin volumen | Tus archivos están dentro del contenedor y el redeploy los borra. Sácalos antes de actualizar (`docker cp <contenedor>:/data/media ./media`); con el volumen ya en `/data`, devuélvelos a `/data/media` y reinicia la app para que el contenedor les dé dueño. |
+  | `MEDIA_DIR=/data/media` sin volumen | Tus archivos están dentro del contenedor y el redeploy los borra. Sácalos antes de actualizar (`docker cp <contenedor>:/data/media ./media`); con el volumen ya en `/data`, devuélvelos (`docker cp ./media/. <contenedor>:/data/media`) y reinicia la app para que el contenedor les dé dueño. |
   | docker compose | Nada: el compose nuevo monta el volumen `vocero_app_data` en `/data`. El de 1.3.0 no montaba volumen para la app, así que no había archivos guardados. |
 
   La imagen ya no declara `USER`: `docker exec` entra como root. Para actuar
@@ -59,13 +59,14 @@ reconectar. Respalda la base antes, como en cualquier actualización.
 - **Variables.** Ninguna obligatoria nueva.
   - `BRAIN_HEALTH_URL` (opcional): el `/health` de tu cerebro externo, p. ej.
     `http://nea:8000/health`, para la tarjeta «Quién responde a tus
-    clientes». Tiene que ser una URL `http://` o `https://` completa: con otro
-    valor el entorno no valida, `/api/health` responde 503 y el log de
-    arranque dice qué variable falló.
-  - `SOURCE_COMMIT` escrito a mano en la plataforma: la barra ahora lo marca
-    «commit sin verificar» y `/api/health` responde `"commitVerified":false`.
-    Quítalo, o pásalo como build arg en cada build (README → Versiones). La
-    imagen publicada ya trae el suyo.
+    clientes». Tiene que ser una URL `http://` o `https://` completa. Con
+    cualquier otro valor el entorno no valida y la app entera deja de
+    funcionar, no solo la tarjeta: `/api/health` responde 503 y el log de
+    arranque nombra la variable. Vacía cuenta como no definida.
+  - `SOURCE_COMMIT` escrito a mano en la plataforma: si el build no trae su
+    propio commit, la barra lo marca «commit sin verificar» y `/api/health`
+    responde `"commitVerified":false`. Quítalo, o pásalo como build arg en
+    cada build (README → Versiones). La imagen publicada ya trae el suyo.
   - Solo docker compose: `VOCERO_CRM_VERSION` elige la versión de la imagen
     (por defecto, la de esta versión). Y el compose ahora le pasa a la app
     `CHANNELS`, `AGENDA`, `ATRIBUCION`, `BOT_API_KEY` y `BRAIN_HEALTH_URL`: en
@@ -76,12 +77,19 @@ reconectar. Respalda la base antes, como en cualquier actualización.
   anuncio llegó cada conversación (titular, texto, creativo, enlace) se guarda
   y se ve siempre, con o sin la bandera. Sin ella no se guarda el `ctwa_clid`
   ni se le reporta nada a Meta.
+- **Override del webhook (cerebro externo o modo agencia).** En 1.3.0, cada
+  vez que guardabas la conexión en Configuración → WhatsApp (o rotabas el
+  token) se re-suscribía la app sin cuerpo, que es como Meta borra el
+  override de callback de la WABA. 1.4.0 ya no lo hace, pero no devuelve uno
+  que ya se perdió: revisa `GET /{WABA_ID}/subscribed_apps` y, si falta
+  `override_callback_uri`, vuelve a ponerlo con la URL de quien debe recibir
+  los webhooks (la llamada está en README → modo agencia, paso 4).
 - **Si conectas tu propio cerebro por `/api/bot/*`.**
   - Límite nuevo: primero se autentica y después se cuenta. Con la llave
     buena hay 1200 llamadas por minuto (antes 600, contadas antes de mirar la
-    llave). Las fallidas se frenan por IP: pasadas 30 en un minuto responden
-    `429 rate_limited` en vez de `401`. Si tu bot recibe 429 sin estar en un
-    bucle, revisa su llave.
+    llave). Las fallidas, sin llave o con una mala, se frenan por IP: pasadas
+    30 en un minuto responden `429 rate_limited` («Demasiados intentos
+    fallidos») en vez de `401`. Si tu bot recibe ese 429, revisa su llave.
   - `GET /api/bot/availability` sin `limit`, `perDay` ni `days` ahora
     devuelve los defaults del contrato (12 huecos, 3 por día, 5 días); antes,
     un solo hueco.
@@ -99,8 +107,8 @@ reconectar. Respalda la base antes, como en cualquier actualización.
   anuncios, el agente y lo que se está cayendo, contra el periodo anterior.
   Todo sale de la base propia: sin gasto publicitario ni conectores, y el
   Laboratorio no cuenta. Las citas del agente, solo con `AGENDA`. Los días se
-  cortan en la zona de la agenda; sin agenda, en `America/Mexico_City`.
-  ([#70])
+  cortan en la zona de la agenda; si no hay agenda configurada, en
+  `America/Mexico_City`. ([#70])
 - **De qué anuncio llegó cada conversación**, sin bandera: marca «Anuncio ·
   titular» y filtro «Anuncios» en la bandeja; tarjeta con el creativo, el
   texto y el enlace en el panel del contacto y en el cajón del trato. La
@@ -122,12 +130,12 @@ reconectar. Respalda la base antes, como en cualquier actualización.
   previa de Configuración → Marca. ([#64])
 - La imagen de Docker se construye en cada PR y se publica en GHCR con cada
   tag. ([#68])
-- `/api/health` responde `commitVerified`. ([#65])
+- `/api/health` dice si el commit salió del build (`commitVerified`). ([#65])
 
 ### Cambió
 
 - La barra lateral es azul marino en los dos temas, y el tema oscuro sube la
-  página un escalón sobre ella: diálogos y cajones flotan, el texto pasa AA de
+  página un escalón sobre ella: diálogos y cajones flotan, su texto pasa AA de
   contraste y el foco por teclado se ve. Con un acento propio claro (verde,
   amarillo…), la tinta de botones y distintivos pasa de blanco a casi negro
   cuando el blanco no llega a 4.5:1. ([#64], [#72])
@@ -149,9 +157,9 @@ reconectar. Respalda la base antes, como en cualquier actualización.
 
 ### Corregido
 
-- Quien pide un humano recibe un aviso antes del traspaso («Claro, te
-  comunico con una persona del equipo. En breve te responden.»). Cuando el
-  traspaso lo decidía el patrón de respaldo, el cliente no recibía nada.
+- Cuando el patrón de respaldo detecta que el cliente pide un humano, el
+  agente le avisa antes del traspaso («Claro, te comunico con una persona del
+  equipo. En breve te responden.»); antes lo traspasaba sin mandarle nada.
   ([#65])
 - El agente incluido reserva el horario que el cliente elige; antes no
   acertaba el instante y la conversación entraba en bucle. ([#54])
@@ -181,10 +189,10 @@ reconectar. Respalda la base antes, como en cualquier actualización.
 Gracias a @Diony7004, @federicorv25, @fondeur27-09-73, @dev-bahari,
 @davidcaroo y @dean-wya por los reportes, los diagnósticos y el código.
 
-## 1.3.0 — 2026-09-01
+## 1.3.0 y anteriores
 
-Primera versión etiquetada, sin entrada aquí: lo que trajo está en el tag
-[`v1.3.0`](https://github.com/kevinrivm/vocero-crm/tree/v1.3.0).
+Sin entrada aquí: lo anterior está en el tag
+[`v1.3.0`](https://github.com/kevinrivm/vocero-crm/tree/v1.3.0) (2026-09-01).
 
 [#54]: https://github.com/kevinrivm/vocero-crm/pull/54
 [#55]: https://github.com/kevinrivm/vocero-crm/pull/55
