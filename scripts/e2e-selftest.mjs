@@ -2750,4 +2750,71 @@ async function r11BotChecks() {
   );
   const otraIp = await intento(undefined, `10.254.${Number(RUN.slice(2, 4))}.${Number(RUN.slice(4, 6))}`);
   ok("otra IP sin key sigue en 401 (el freno es por IP, no global)", otraIp === 401, `status=${otraIp}`);
+
+  /*
+   * 2. Quien escribió primero CON teléfono y luego llega solo con BSUID: el
+   *    contexto por `bsuid:<id>` es su contacto. Antes: 404, y el cerebro
+   *    no podía contestarle.
+   */
+  console.log("\n== R11: contexto por BSUID de quien escribió con teléfono ==");
+  const inbound = (body) =>
+    api("/api/dev/wa-mock/inbound", {
+      method: "POST",
+      body: JSON.stringify({ phoneNumberId: PN, ...body }),
+    });
+  const convDe = async (canonico) =>
+    ((await api("/api/conversations")).json?.conversations ?? []).find(
+      (c) => c.contact.phone === canonico
+    );
+  const mensajesDe = async (id) =>
+    (await api(`/api/conversations/${id}/messages`)).json?.messages ?? [];
+  const CANON = `524629${RUN}`;
+  const BSU = `MX.r11.${RUN}`;
+  const NOMBRE = `R11 BSUID ${RUN}`;
+  await inbound({
+    from: `5214629${RUN}`,
+    fromUserId: BSU,
+    name: NOMBRE,
+    text: "hola, les escribo con mi número",
+    waMessageId: `wamid.e2e.r11.tel.${RUN}`,
+  });
+  await hasta(async () => Boolean(await convDe(CANON)));
+  const conv = await convDe(CANON);
+  ok("el contacto nace con el teléfono como identidad", Boolean(conv));
+
+  // Meta ya no manda el teléfono: solo el BSUID.
+  await inbound({
+    fromUserId: BSU,
+    name: NOMBRE,
+    text: "y ahora sin número",
+    waMessageId: `wamid.e2e.r11.bsu.${RUN}`,
+  });
+  const reconciliado = await hasta(async () =>
+    conv ? (await mensajesDe(conv.id)).some((m) => m.text === "y ahora sin número") : false
+  );
+  ok("la ingesta reconcilia el mensaje solo-BSUID a la MISMA conversación", reconciliado);
+
+  const bsuid = encodeURIComponent(`bsuid:${BSU}`);
+  const porBsuid = await bot(`/api/bot/context?waIdentity=${bsuid}`);
+  ok(
+    "GET /api/bot/context?waIdentity=bsuid:<id> → 200 (antes 404)",
+    porBsuid.res.status === 200,
+    `status=${porBsuid.res.status}`
+  );
+  ok(
+    "…y es el MISMO contacto y conversación (su identidad sigue siendo el teléfono)",
+    porBsuid.json?.conversation?.id === conv?.id &&
+      porBsuid.json?.contact?.waIdentity === CANON,
+    JSON.stringify({ conv: porBsuid.json?.conversation?.id, contact: porBsuid.json?.contact })
+  );
+  const neutro = await bot(`/api/bot/context?identity=${bsuid}`);
+  ok(
+    "el nombre neutro `identity` resuelve igual",
+    neutro.json?.conversation?.id === conv?.id,
+    `status=${neutro.res.status}`
+  );
+  const nadie = await bot(
+    `/api/bot/context?waIdentity=${encodeURIComponent(`bsuid:MX.r11.nadie.${RUN}`)}`
+  );
+  ok("un BSUID que nadie tiene sigue en 404", nadie.res.status === 404, `status=${nadie.res.status}`);
 }
