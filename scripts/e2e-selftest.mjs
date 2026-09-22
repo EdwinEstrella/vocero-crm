@@ -1226,6 +1226,7 @@ async function main() {
 
   await agendaChecks();
   await atribucionChecks();
+  await anuncioDeOrigenChecks();
 
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
@@ -1981,11 +1982,31 @@ async function atribucionChecks() {
       }),
     });
     ok("inbound con anuncio entregado igual", inb.res.ok);
-    await sleep(1400);
-    const convsOff = (await api("/api/conversations")).json?.conversations ?? [];
+    // Con `preview` ya entró el mensaje, y el anuncio se guarda antes que él.
+    let convOff = null;
+    await hasta(async () => {
+      const convs = (await api("/api/conversations")).json?.conversations ?? [];
+      convOff = convs.find(
+        (c) => c.contact.name === nom("Lead con anuncio apagada") && c.preview != null
+      );
+      return !!convOff;
+    });
+    ok("la conversación del anuncio existe (la ingesta no se rompe)", !!convOff);
+    // 018 — La bandera ya no esconde DE QUÉ anuncio llegó: eso se ve siempre.
+    // Lo que apaga es el identificador de clic, que ni se guarda.
     ok(
-      "la conversación del anuncio existe (la ingesta no se rompe)",
-      convsOff.some((c) => c.contact.name === nom("Lead con anuncio apagada"))
+      "el origen del anuncio se ve igual con la bandera apagada (018)",
+      convOff?.anuncio?.headline === "Anuncio de prueba",
+      JSON.stringify(convOff?.anuncio)
+    );
+    const detalleOff = convOff
+      ? (await api(`/api/contacts/${convOff.contact.id}`)).json
+      : null;
+    ok(
+      "pero sin identificador de clic: hasCtwaClid es false y el valor no aparece",
+      detalleOff?.anuncio?.hasCtwaClid === false &&
+        !JSON.stringify(detalleOff).includes("clid-apagada"),
+      JSON.stringify(detalleOff?.anuncio)
     );
     console.log(
       "  (atribución apagada: el resto de los checks de 016 no aplican)"
@@ -2288,4 +2309,250 @@ async function atribucionChecks() {
     act7.length >= 3,
     `${act7.length} filas`
   );
+}
+
+/* ============================================================
+ * 018 — De qué anuncio llegó cada conversación (tests/e2e/us-atribucion.md)
+ *
+ * Corre con la bandera ATRIBUCION apagada Y encendida: el origen del anuncio
+ * se ve siempre, y lo único que cambia es si Meta identificó el clic. Puerto
+ * de las secciones 1-4b del guion de la spec 212 de Vocero Cloud, sin las
+ * comprobaciones entre organizaciones (aquí hay una).
+ *
+ * Los creativos los sirve el wa-mock (`/api/dev/wa-mock/media-file/creativo-*`),
+ * en el origen de META_GRAPH_BASE_URL: el único que la copia acepta fuera de
+ * los hosts de Meta, y solo con los mocks habilitados.
+ * ============================================================ */
+
+async function anuncioDeOrigenChecks() {
+  const atribuye = /^(on|1|true|si|sí|yes)$/i.test(
+    (process.env.ATRIBUCION ?? "").trim()
+  );
+  const RUN = String(Date.now()).slice(-6);
+  const tel = (n) => `52156${RUN}${String(n).padStart(2, "0")}`;
+  const nombre = (n) => `Anuncio ${RUN} ${n}`;
+  let origenMock = BASE;
+  try {
+    origenMock = new URL(process.env.META_GRAPH_BASE_URL).origin;
+  } catch {
+    /* sin META_GRAPH_BASE_URL: el propio BASE */
+  }
+  const creativo = (id) => `${origenMock}/api/dev/wa-mock/media-file/${id}`;
+  const referralCtwa = ({ id, titular, imagen, tipo = "ad" }) => ({
+    source_url: `https://fb.me/anuncio-${RUN}-${id}`,
+    source_id: `1202${RUN}${id}`,
+    source_type: tipo,
+    headline: titular,
+    body: `Texto del anuncio ${id}`,
+    media_type: "image",
+    image_url: imagen,
+    ctwa_clid: `clid-018-${RUN}-${id}`,
+  });
+  const entra = (n, texto, referral, waMessageId = `wamid.e2e.018.${RUN}.${n}`) =>
+    api("/api/dev/wa-mock/inbound", {
+      method: "POST",
+      body: JSON.stringify({
+        phoneNumberId: PN,
+        from: tel(n),
+        name: nombre(n),
+        text: texto,
+        waMessageId,
+        ...(referral ? { referral } : {}),
+      }),
+    });
+  // El webhook procesa en `after()`: la conversación existe un instante antes
+  // que su anuncio y su mensaje. Con `preview` ya hay mensaje, y el anuncio se
+  // guarda ANTES que el mensaje: a partir de ahí lo que diga la lista es final.
+  const conversacionDe = async (n) => {
+    let hallada = null;
+    await hasta(async () => {
+      const convs = (await api("/api/conversations")).json?.conversations ?? [];
+      hallada =
+        convs.find((c) => c.contact.name === nombre(n) && c.preview != null) ?? null;
+      return !!hallada;
+    });
+    return hallada;
+  };
+  const detalle = async (contactId) =>
+    (await api(`/api/contacts/${contactId}`)).json;
+  const imagenDe = async (contactId, ms = 15000) => {
+    let id = null;
+    await hasta(async () => {
+      id = (await detalle(contactId))?.anuncio?.imageAssetId ?? null;
+      return !!id;
+    }, ms);
+    return id;
+  };
+
+  console.log(
+    `\n== 018: de qué anuncio llegó (ATRIBUCION ${atribuye ? "encendida" : "apagada"}) ==`
+  );
+  // En `next dev` una ruta se compila en su primera petición y eso puede tardar
+  // más que la espera de la copia: se calientan antes de medir.
+  await fetch(creativo("creativo-calentamiento")).catch(() => null);
+  await api("/api/media/calentamiento").catch(() => null);
+
+  /* ---------- 1 · el primer mensaje trae su anuncio ---------- */
+  const R1 = referralCtwa({ id: 1, titular: `Diagnóstico gratis ${RUN}`, imagen: creativo(`creativo-azul-${RUN}`) });
+  const R2 = referralCtwa({ id: 2, titular: `Segundo anuncio ${RUN}`, imagen: creativo(`creativo-rojo-${RUN}`) });
+  const inb1 = await entra(1, `Hola, vi su anuncio ${RUN}`, R1);
+  ok("el webhook acepta el mensaje con referral", inb1.res.ok, `status=${inb1.res.status}`);
+  const conv1 = await conversacionDe(1);
+  ok(
+    "la lista trae el anuncio con su titular",
+    conv1?.anuncio?.headline === R1.headline &&
+      conv1?.anuncio?.sourceId === R1.source_id &&
+      conv1?.anuncio?.sourceType === "ad",
+    JSON.stringify(conv1?.anuncio)
+  );
+  const d1 = conv1 ? await detalle(conv1.contact.id) : null;
+  const an = d1?.anuncio;
+  ok(
+    "el detalle del contacto trae el anuncio completo",
+    an?.sourceId === R1.source_id && an?.sourceType === "ad" &&
+      an?.sourceUrl === R1.source_url && an?.body === R1.body &&
+      an?.mediaType === "image" && !!an?.capturedAt,
+    JSON.stringify(an)
+  );
+  ok(
+    atribuye
+      ? "con la bandera encendida, Meta identificó el clic (hasCtwaClid)"
+      : "con la bandera apagada, no hay clic que identificar (hasCtwaClid false)",
+    an?.hasCtwaClid === atribuye,
+    JSON.stringify(an)
+  );
+  const lista1 = (await api("/api/conversations")).json;
+  ok(
+    "el ctwa_clid no sale por la API",
+    !JSON.stringify(d1 ?? {}).includes(R1.ctwa_clid) &&
+      !JSON.stringify(lista1 ?? {}).includes(R1.ctwa_clid),
+    "¡la respuesta traía el identificador de clic!"
+  );
+  ok(
+    "la fuente sin capturar se deduce «anuncio»",
+    d1?.contact?.source?.value === "anuncio" &&
+      d1?.contact?.source?.source === "deducida",
+    JSON.stringify(d1?.contact?.source)
+  );
+  const imagenR1 = conv1 ? await imagenDe(conv1.contact.id) : null;
+  ok("la imagen del creativo queda guardada", !!imagenR1, "imageAssetId siguió en null");
+  if (imagenR1) {
+    const media = await fetch(`${BASE}/api/media/${imagenR1}`, { headers: { cookie } });
+    const bytes = Buffer.from(await media.arrayBuffer());
+    ok(
+      "y se sirve como PNG con sesión",
+      media.status === 200 &&
+        media.headers.get("content-type") === "image/png" &&
+        bytes.subarray(1, 4).toString() === "PNG",
+      `status ${media.status}, tipo ${media.headers.get("content-type")}, ${bytes.length} bytes`
+    );
+    const sinSesion = await fetch(`${BASE}/api/media/${imagenR1}`);
+    ok("sin sesión no se sirve", sinSesion.status === 401, `status=${sinSesion.status}`);
+  }
+
+  /* ---------- 2 · el primer anuncio gana y nada se duplica ---------- */
+  const entrantes = async () =>
+    conv1
+      ? ((await api(`/api/conversations/${conv1.id}/messages`)).json?.messages ?? [])
+          .filter((m) => m.direction === "in").length
+      : -1;
+  const antes = await entrantes();
+  // Reentrega exacta del primer mensaje, como hace Meta, y un segundo mensaje
+  // de la misma persona desde OTRO anuncio.
+  await entra(1, `Hola, vi su anuncio ${RUN}`, R1);
+  await entra(1, `Vi otro anuncio ${RUN}`, R2, `wamid.e2e.018.${RUN}.1b`);
+  await hasta(async () => (await entrantes()) >= antes + 1);
+  await sleep(600); // por si la reentrega llegara a colarse después
+  const despues = await entrantes();
+  const conv1b = await conversacionDe(1);
+  ok(
+    "el segundo mensaje entra en la misma conversación y el anuncio sigue siendo el primero",
+    conv1b?.id === conv1?.id && conv1b?.anuncio?.sourceId === R1.source_id,
+    JSON.stringify({ id: conv1b?.id, anuncio: conv1b?.anuncio })
+  );
+  ok(
+    "la reentrega no duplicó el mensaje",
+    despues === antes + 1,
+    `entrantes antes ${antes}, después ${despues} (se esperaba +1)`
+  );
+
+  /* ---------- 3 · la imagen se copia una vez por anuncio ---------- */
+  await entra(3, `Otra persona, mismo anuncio ${RUN}`, { ...R1, ctwa_clid: `clid-otro-${RUN}` });
+  const conv3 = await conversacionDe(3);
+  const imagen3 = conv3 ? await imagenDe(conv3.contact.id) : null;
+  ok(
+    "otra conversación del mismo anuncio usa la misma imagen",
+    !!imagenR1 && imagen3 === imagenR1,
+    `imagen ${imagen3} vs ${imagenR1}`
+  );
+
+  /* ---------- 4 · lo que no se descarga no rompe la ingesta ---------- */
+  const casos = [
+    { n: 4, nombre: "host que no es de Meta", imagen: "https://example.com/creativo.png" },
+    { n: 5, nombre: "redirección a otro host", imagen: creativo("creativo-redirige") },
+    { n: 6, nombre: "un SVG", imagen: creativo("creativo-svg") },
+    { n: 7, nombre: "más de 300 KB", imagen: creativo("creativo-enorme") },
+  ];
+  for (const caso of casos) {
+    await entra(caso.n, `Caso ${caso.n} ${RUN}`, referralCtwa({ id: 10 + caso.n, titular: `Caso ${caso.n} ${RUN}`, imagen: caso.imagen }));
+    const conv = await conversacionDe(caso.n);
+    ok(`${caso.nombre}: el mensaje y el anuncio entran`, !!conv?.anuncio, JSON.stringify(conv?.anuncio));
+    caso.contactId = conv?.contact?.id;
+  }
+  await sleep(3000); // la copia en segundo plano termina (o no)
+  for (const caso of casos) {
+    const d = caso.contactId ? await detalle(caso.contactId) : null;
+    ok(
+      `${caso.nombre}: sin imagen, y la tarjeta sigue`,
+      !!d?.anuncio && d.anuncio.imageAssetId === null,
+      JSON.stringify(d?.anuncio)
+    );
+  }
+
+  await entra(8, `Escribí sin anuncio ${RUN}`);
+  const convOrg = await conversacionDe(8);
+  const dOrg = convOrg ? await detalle(convOrg.contact.id) : null;
+  ok(
+    "una conversación orgánica no tiene anuncio",
+    !!convOrg && convOrg.anuncio === null && dOrg?.anuncio === null &&
+      dOrg?.contact?.source?.value === "desconocida",
+    `lista ${JSON.stringify(convOrg?.anuncio)}, detalle ${JSON.stringify(dOrg?.anuncio)}`
+  );
+
+  await entra(9, `Referral sin datos ${RUN}`, { body: "sin nada que identifique", media_type: "image" });
+  const convBasura = await conversacionDe(9);
+  ok(
+    "un referral sin nada útil no crea anuncio, y el mensaje entra",
+    !!convBasura && convBasura.anuncio === null,
+    JSON.stringify(convBasura?.anuncio)
+  );
+
+  await entra(10, `Desde una publicación ${RUN}`, referralCtwa({ id: 30, titular: `Publicación ${RUN}`, imagen: creativo(`creativo-verde-${RUN}`), tipo: "post" }));
+  const convPub = await conversacionDe(10);
+  const dPub = convPub ? await detalle(convPub.contact.id) : null;
+  ok(
+    "una publicación se enseña, pero no cuenta como fuente «anuncio»",
+    convPub?.anuncio?.sourceType === "post" && dPub?.contact?.source?.value === "desconocida",
+    `lista ${JSON.stringify(convPub?.anuncio)}, fuente ${JSON.stringify(dPub?.contact?.source)}`
+  );
+
+  /* ---------- 4b · un tropiezo de red no deja la tarjeta sin imagen ---------- */
+  // La primera petición tarda más que la espera de la copia: el reintento la trae.
+  await entra(13, `Creativo lento ${RUN}`, referralCtwa({ id: 40, titular: `Lento ${RUN}`, imagen: creativo(`creativo-lento-${RUN}`) }));
+  const convLento = await conversacionDe(13);
+  const imagenLenta = convLento ? await imagenDe(convLento.contact.id, 25000) : null;
+  ok("una descarga que se cuelga una vez se reintenta y llega", !!imagenLenta, "la imagen no llegó tras el reintento");
+
+  // Falla la copia y su reintento (503 dos veces): la repara abrir el contacto.
+  await entra(14, `Creativo que falla ${RUN}`, referralCtwa({ id: 41, titular: `Falla ${RUN}`, imagen: creativo(`creativo-falla-${RUN}`) }));
+  const convFalla = await conversacionDe(14); // la lista no repara nada
+  await sleep(4000);
+  const primera = convFalla ? await detalle(convFalla.contact.id) : null;
+  ok(
+    "tras dos fallos la tarjeta llega sin imagen",
+    !!primera?.anuncio && primera.anuncio.imageAssetId === null,
+    JSON.stringify(primera?.anuncio)
+  );
+  const reparada = convFalla ? await imagenDe(convFalla.contact.id, 16000) : null;
+  ok("y abrir el contacto la repara en segundo plano", !!reparada, "la imagen no se reparó");
 }

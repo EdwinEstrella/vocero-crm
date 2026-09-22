@@ -178,6 +178,9 @@ Esta feature tiene historia y conviene decirla completa:
 
 - **FR-001**: La superficie completa (pantalla, rutas y captura) no existe sin la
   bandera `ATRIBUCION`; la migración se aplica siempre.
+  *Enmendado por [018](../018-anuncio-de-origen/spec.md) el 2026-09-21: el
+  origen del anuncio se captura y se ve siempre; sin la bandera se guarda sin
+  `ctwa_clid`. La pantalla, las rutas y el envío a Meta siguen tras ella.*
 - **FR-002**: Con la bandera apagada, el prompt del agente y la operación quedan
   idénticos: la feature no se menciona en ningún lado.
 - **FR-003**: El primer `referral` de una conversación se guarda con su

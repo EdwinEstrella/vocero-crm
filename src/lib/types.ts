@@ -17,6 +17,29 @@ export type ConversationDto = {
   windowOpen: boolean;
   windowRemainingMs: number;
   preview: string | null;
+  /** 018: el anuncio que abrió la conversación, para la marca de la lista. */
+  anuncio: {
+    headline: string | null;
+    sourceId: string | null;
+    /** `post` si fue una publicación y no un anuncio. */
+    sourceType: string | null;
+  } | null;
+};
+
+/** 018 — De qué anuncio llegó un contacto, como lo ve la bandeja. */
+export type AnuncioDto = {
+  sourceId: string | null;
+  sourceType: string | null;
+  /** Solo https. */
+  sourceUrl: string | null;
+  headline: string | null;
+  body: string | null;
+  mediaType: string | null;
+  /** Imagen del creativo, servida por `/api/media/{id}`. */
+  imageAssetId: string | null;
+  /** Si Meta mandó identificador de clic. El valor no sale del servidor. */
+  hasCtwaClid: boolean;
+  capturedAt: string;
 };
 
 /** 008 — Adjunto de un mensaje, para previsualización en el hilo. */
