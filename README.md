@@ -66,6 +66,16 @@ Cada persona que escribe queda registrada sola y entra al pipeline
 tarjetas, busca, agrega notas, archiva. El agente puede mover leads de etapa
 cuando detecta intención de compra.
 
+### 🎯 Resultados
+
+Una pantalla para la junta del lunes: prospectos nuevos, tratos ganados y
+perdidos, dinero cerrado y el embudo de los que entraron, contra el periodo
+anterior; si el agente contesta, qué tan rápido y cuándo pasa a un humano; de
+qué origen y de qué **anuncio** llegan las conversaciones que terminan en
+venta (con la miniatura del creativo), y qué se está cayendo hoy: leads en
+silencio, mensajes que no llegaron y ventanas de 24 h por cerrarse. Todo sale
+de los datos del propio CRM: no pide conectar nada, y el Laboratorio no cuenta.
+
 ### 🤖 Agente de IA con TU conocimiento
 
 Configura nombre, tono, instrucciones y reglas de escalado; dale conocimiento
