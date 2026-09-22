@@ -14,7 +14,9 @@ export default async function BrandingSettingsPage() {
 
   return (
     <div className="max-w-2xl space-y-6">
-      <BrandingClient />
+      {/* El logo viaja como prop: al subirlo o quitarlo, FaviconCard refresca
+          la página y la vista previa de la marca lo sigue sin recargar. */}
+      <BrandingClient favicon={branding.favicon} />
       <FaviconCard branding={branding} />
     </div>
   );

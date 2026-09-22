@@ -28,6 +28,11 @@
     --text-4: #aab4c8;
     --border: #e8edf6;
     --border-strong: #dde5f1;
+    /* Chips dentro de una fila y la fila bajo el cursor. En claro coinciden
+       con --bg y --bg-subtle; en oscuro NO: ahí --bg-subtle es más oscuro que
+       --bg y un chip con fondo --bg desaparece dentro de la fila. */
+    --chip-bg: #ffffff;
+    --row-hover: #f6f8fc;
 
     /* Chat: el cliente entra en verde WhatsApp, el CRM contesta en el acento */
     --chat-bg: #f6f8fc;
@@ -93,14 +98,18 @@
     /* Neutros: el azul marino de las secciones oscuras de la landing */
     --bg: #0b1327;
     --bg-subtle: #070e20;
-    --bg-panel: #111b36;
-    --bg-hover: #172346;
+    --bg-panel: #131f3d;
+    --bg-hover: #182750;
     --text: #e8eefc;
     --text-2: #a9b8dc;
     --text-3: #7688b0;
     --text-4: #55648a;
-    --border: #1a2748;
-    --border-strong: #26376a;
+    /* 214 — Bordes con contraste ≥ 1.6:1 contra --bg (antes 1.26: las tres
+       columnas de la bandeja se fundían en un solo azul marino). */
+    --border: #263866;
+    --border-strong: #34498a;
+    --chip-bg: #142040;
+    --row-hover: #111b36;
 
     /* Chat */
     --chat-bg: #070e20;
@@ -145,6 +154,32 @@
     /* Sombras: sobre oscuro necesitan más negro para leerse */
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
     --shadow-md: 0 14px 40px -16px rgba(0, 0, 0, 0.6);
+    --shadow-pop: 0 30px 80px -20px rgba(0, 0, 0, 0.75),
+      0 8px 24px -12px rgba(0, 0, 0, 0.5);
+  }
+
+  /*
+    Sidebar: azul marino fijo, sin importar el tema claro/oscuro del resto de
+    la app (como el lateral de la landing). Redeclara los mismos neutros del
+    tema oscuro directamente sobre el `<aside>` (ver AppNav) para que las
+    clases que ya usa (bg-subtle, border, text-2, text-3, hover:bg-accent…)
+    hereden estos valores en vez de los de `:root`. El acento (--accent*, para
+    el ítem activo y el avatar) lo fija por separado `accentCssVariables` en
+    lib/branding.ts, porque depende del white-label de cada organización.
+  */
+  .nav-dark {
+    --bg: #0b1327;
+    --bg-subtle: #070e20;
+    --bg-panel: #131f3d;
+    --bg-hover: #182750;
+    --text: #e8eefc;
+    --text-2: #a9b8dc;
+    --text-3: #7688b0;
+    --text-4: #55648a;
+    --border: #263866;
+    --border-strong: #34498a;
+    --chip-bg: #142040;
+    --row-hover: #111b36;
     --shadow-pop: 0 30px 80px -20px rgba(0, 0, 0, 0.75),
       0 8px 24px -12px rgba(0, 0, 0, 0.5);
   }
@@ -241,6 +276,14 @@
       circle at 82% 0%,
       color-mix(in srgb, var(--accent) 7%, transparent),
       transparent 55%
+    );
+  }
+  /* En oscuro el 7% no se percibe y el hilo vacío se ve como un hueco. */
+  :root[data-theme="dark"] .thread-bg {
+    background-image: radial-gradient(
+      circle at 82% 0%,
+      color-mix(in srgb, var(--accent) 16%, transparent),
+      transparent 60%
     );
   }
 

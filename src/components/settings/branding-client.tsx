@@ -18,7 +18,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export function BrandingClient() {
+export function BrandingClient({
+  favicon = null,
+}: {
+  /**
+   * Logo subido, solo para la vista previa: se sube y se quita en su propia
+   * tarjeta. Llega del servidor y no del fetch de abajo a propósito: esa
+   * tarjeta hace `router.refresh()` al subir o quitar, la página vuelve a
+   * pasar la prop y la vista previa cambia sin recargar. Leído una sola vez
+   * al montar, se quedaría con el logo de antes.
+   */
+  favicon?: Branding["favicon"];
+}) {
   const router = useRouter();
   const mode = useResolvedTheme();
   const [name, setName] = useState("");
@@ -178,7 +189,9 @@ export function BrandingClient() {
           >
             <div className="flex items-center gap-2.5">
               <div className="min-w-0">
-                <BrandLogo branding={{ name: name.trim() || DEFAULT_BRANDING.name }} />
+                <BrandLogo
+                  branding={{ name: name.trim() || DEFAULT_BRANDING.name, accent, favicon }}
+                />
                 <span className="kicker mt-1.5 block">CRM · WhatsApp</span>
               </div>
               <span className="flex-1" />
