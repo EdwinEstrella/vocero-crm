@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import type { Branding } from "@/lib/branding";
 import type { ThemePreference } from "@/lib/theme";
+import type { ResolvedCommit } from "@/lib/version";
 import { AppNav } from "@/components/app-nav";
 import { BrandLogo } from "@/components/brand-mark";
 
@@ -33,8 +34,8 @@ export function AppShell({
   userName: string;
   role: string;
   theme: ThemePreference;
-  /** Commit resuelto en el servidor (build-arg o variable de la plataforma). */
-  commit?: string;
+  /** Commit resuelto en el servidor, con su procedencia (ver `resolveCommit`). */
+  commit?: ResolvedCommit;
   /** 015 — ¿esta instancia tiene agenda? Lo decide el servidor. */
   agenda?: boolean;
   children: React.ReactNode;

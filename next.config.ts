@@ -13,10 +13,12 @@ const nextConfig: NextConfig = {
   output: process.platform === "win32" ? undefined : "standalone",
   // El paquete `postgres` usa APIs de Node que no deben empaquetarse en el bundle.
   serverExternalPackages: ["postgres"],
-  // Se congelan al construir: el binario lleva dentro de qué código salió, así
-  // que no puede mentir en tiempo de ejecución. `SOURCE_COMMIT` lo inyecta
-  // Coolify solo; con docker compose se pasa por `--build-arg` y si falta, la
-  // app enseña solo la versión.
+  // Se congelan al construir: lo que queda aquí va dentro del binario y no
+  // cambia en tiempo de ejecución. El commit solo se congela si `SOURCE_COMMIT`
+  // llega AL BUILD (build arg `SOURCE_COMMIT`; con docker compose,
+  // `--build-arg`). Si no llega, esto queda vacío y el servidor cae al
+  // `SOURCE_COMMIT` del entorno al arrancar, marcado como NO verificado
+  // (`src/lib/version.ts`, #50): puede no ser el del código que corre.
   env: {
     NEXT_PUBLIC_APP_VERSION: version,
     NEXT_PUBLIC_BUILD_COMMIT: process.env.SOURCE_COMMIT ?? "",

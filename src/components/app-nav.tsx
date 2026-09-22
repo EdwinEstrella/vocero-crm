@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   CalendarDays,
   FlaskConical,
   Inbox,
@@ -21,7 +22,13 @@ import { signOut } from "@/lib/auth/client";
 import { useEvents } from "@/components/use-events";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { BrandLogo } from "@/components/brand-mark";
-import { APP_VERSION, BUILD_COMMIT, versionLabel } from "@/lib/version";
+import {
+  BUILD_COMMIT,
+  UNVERIFIED_COMMIT_NOTE,
+  versionLabel,
+  versionTitle,
+  type ResolvedCommit,
+} from "@/lib/version";
 
 type NavItem = {
   href: string;
@@ -74,9 +81,10 @@ export function AppNav({
   theme: ThemePreference;
   /**
    * Commit resuelto en el servidor. Gana al de build porque puede venir de la
-   * plataforma cuando quien construyó no lo pasó como build-arg.
+   * plataforma cuando quien construyó no lo pasó como build-arg — y en ese
+   * caso llega con `verified: false`, y la insignia lo dice.
    */
-  commit?: string;
+  commit?: ResolvedCommit;
   /**
    * 015 — ¿hay agenda en esta instancia? Viene del servidor por prop y no se
    * deduce de los datos: una instancia con la agenda encendida pero sin citas
@@ -109,7 +117,7 @@ export function AppNav({
     onConversationUpdated: () => void refetchUnread(),
   });
 
-  const sha = commit || BUILD_COMMIT;
+  const version = commit ?? { commit: BUILD_COMMIT, verified: BUILD_COMMIT !== "" };
   const settingsActive = pathname.startsWith("/settings");
   // Citas va después de Pipeline: es el paso siguiente de un trato, no una
   // sección aparte.
@@ -211,15 +219,26 @@ export function AppNav({
       {/* El nombre sale de la marca, no de una constante: esto es white-label,
           y una instancia rebautizada que dice "Vocero" en el tooltip delata el
           producto de debajo justo donde el operador la mira todos los días. */}
+      {/* Un commit que no salió del build lo dice (#50): presentarlo igual
+          que uno verificado es la insignia mintiendo justo cuando alguien la
+          consulta para saber qué código corre. El aviso es el ícono (color de
+          advertencia: basta 3:1 para un gráfico) y el texto va en `text-2`,
+          que pasa AA sobre la barra en cualquier tema. */}
       <p
         className="mt-2 px-2.5 font-mono text-[10.5px] tracking-[0.06em] text-text-2"
-        title={
-          sha
-            ? `${branding.name} ${APP_VERSION}, construido del commit ${sha}`
-            : `${branding.name} ${APP_VERSION}`
-        }
+        title={versionTitle(branding.name, version)}
       >
-        {versionLabel(sha)}
+        {versionLabel(version.commit)}
+        {version.commit && !version.verified && (
+          <span className="mt-0.5 flex items-center gap-1">
+            <AlertTriangle
+              className="h-3 w-3 shrink-0 text-warning-text"
+              strokeWidth={2}
+              aria-hidden
+            />
+            {UNVERIFIED_COMMIT_NOTE}
+          </span>
+        )}
       </p>
     </aside>
   );
