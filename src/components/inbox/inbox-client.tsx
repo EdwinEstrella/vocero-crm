@@ -302,7 +302,7 @@ export function InboxClient({ channels }: { channels: readonly Channel[] }) {
               <button
                 onClick={() => setSelectedId(null)}
                 aria-label="Volver a las conversaciones"
-                className="shrink-0 rounded-md p-1.5 text-text-2 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand-soft md:hidden"
+                className="shrink-0 rounded-md p-1.5 text-text-2 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden"
               >
                 <ChevronLeft className="h-5 w-5" strokeWidth={1.8} />
               </button>
@@ -339,7 +339,7 @@ export function InboxClient({ channels }: { channels: readonly Channel[] }) {
                 <button
                   onClick={() => togglePanel(true)}
                   aria-label="Mostrar detalles"
-                  className="shrink-0 rounded-full border border-border-strong p-1.5 text-text-3 transition-colors hover:border-text-3 hover:text-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand-soft"
+                  className="shrink-0 rounded-full border border-border-strong p-1.5 text-text-3 transition-colors hover:border-text-3 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <PanelRight className="h-4 w-4" strokeWidth={1.7} />
                 </button>

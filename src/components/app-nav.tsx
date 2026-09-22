@@ -52,7 +52,9 @@ const AGENDA_ITEM: NavItem = {
 function navItemClass(active: boolean) {
   return cn(
     "flex items-center gap-[10px] rounded-sm px-2.5 py-2.5 text-[13.5px] font-semibold transition-colors lg:py-2",
-    "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand-soft",
+    // Acento sólido: dentro de `.nav-dark` es el calculado para fondo oscuro,
+    // así que contrasta con la barra (≥ 3.5:1) sea cual sea el white-label.
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
     active
       ? "bg-brand-tint text-brand-text"
       : "text-text-2 hover:bg-accent hover:text-foreground"

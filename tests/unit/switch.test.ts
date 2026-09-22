@@ -105,11 +105,19 @@ describe("interruptor: accesible", () => {
     expect(pista).toContain("disabled:opacity-40");
   });
 
-  it("tiene anillo de foco para quien usa el teclado", () => {
-    const { pista } = clases(dibujar());
+  it("tiene anillo de foco visible para quien usa el teclado", () => {
+    // El acento sólido, que por construcción contrasta ≥ 3:1 con el fondo en
+    // los dos temas (ver resolveAccentSet), separado de la pista: encendida
+    // ya es del color del acento. El suave (`ring-brand-soft`) no llega.
+    const { pista } = clases(dibujar({ checked: true }));
     expect(pista).toEqual(
-      expect.arrayContaining(["focus-visible:ring-[3px]", "focus-visible:ring-brand-soft"])
+      expect.arrayContaining([
+        "focus-visible:ring-2",
+        "focus-visible:ring-ring",
+        "focus-visible:ring-offset-2",
+      ])
     );
+    expect(pista).not.toContain("focus-visible:ring-brand-soft");
   });
 });
 

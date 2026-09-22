@@ -22,6 +22,16 @@ const STAGE_DOT: Record<string, string> = {
 };
 const STAGE_DOT_FALLBACK = "var(--text-3)";
 
+/**
+ * Foco por teclado de chips y selector: el anillo de `ui/button`, acento
+ * sólido separado del control (el elegido ya ES del color del acento y un
+ * anillo pegado se fundiría con él). El suave de los campos
+ * (`ring-brand-soft`) queda a ~1.3:1 del fondo: aquí no hay borde que cambie
+ * de color para compensarlo, y se veía menos que el del navegador.
+ */
+const FOCO_SEPARADO =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+
 function EmptyState({ onSeeded }: { onSeeded: () => void }) {
   const [seeding, setSeeding] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -152,7 +162,7 @@ export function ConversationList({
                     }
                     className={cn(
                       "flex items-center gap-1 rounded-full border py-[3px] pl-[5px] pr-2 text-[11.5px] font-medium transition-colors",
-                      "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand-soft",
+                      FOCO_SEPARADO,
                       on
                         ? "border-brand bg-brand-veil text-foreground"
                         : "text-text-3 hover:bg-accent",
@@ -204,7 +214,7 @@ export function ConversationList({
             onClick={() => setFilter(f.id)}
             className={cn(
               "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-[5px] text-[12.5px] font-semibold transition-colors",
-              "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand-soft",
+              FOCO_SEPARADO,
               filter === f.id
                 ? "border-brand bg-brand text-brand-fg"
                 : "border-border-strong bg-chip text-text-2 hover:border-text-3"
@@ -229,7 +239,7 @@ export function ConversationList({
             aria-label="Filtrar por etapa del embudo"
             className={cn(
               "ml-auto min-w-0 max-w-[42%] truncate rounded-full border px-2 py-[5px] text-[12.5px] font-semibold transition-colors",
-              "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand-soft",
+              FOCO_SEPARADO,
               stage === "all"
                 ? "border-border-strong bg-chip text-text-2 hover:border-text-3"
                 : "border-brand bg-brand text-brand-fg"
@@ -268,7 +278,7 @@ export function ConversationList({
                     onClick={() => onSelect(c.id)}
                     className={cn(
                       "flex w-full items-start gap-[11px] px-4 py-[var(--row-py)] text-left transition-colors",
-                      "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-brand-soft",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                       active ? "bg-[var(--bg-active)]" : "hover:bg-row-hover"
                     )}
                   >
