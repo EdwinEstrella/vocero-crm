@@ -399,6 +399,13 @@ base64 (44 caracteres): `openssl rand -base64 32`.
 **La app arranca pero /api/health falla** — La base de datos no está lista o
 `DATABASE_URL` apunta mal; revisa los logs (`docker compose logs app`).
 
+**Subir el logo o el icono da error, o los adjuntos no se ven** — La app no
+puede escribir en `MEDIA_DIR` (`/data/media` en la imagen), y el log de
+arranque lo dice (`[boot] MEDIA_DIR … no es escribible`). Monta un volumen en
+`/data` (el compose ya lo hace; en Coolify, un persistent storage) y no definas
+`MEDIA_DIR` en la plataforma: el contenedor le da el volumen al usuario de la
+app al arrancar.
+
 **Olvidé mi contraseña y no puedo entrar** — Vocero no manda correos (sería una
 dependencia externa) y el registro público se cierra con la primera
 organización, así que no hay flujo de "olvidé mi contraseña". La salida es
