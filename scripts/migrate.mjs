@@ -21,7 +21,12 @@ const migrationsFolder =
 
 const maxAttempts = 15;
 for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-  const sql = postgres(url, { max: 1, onnotice: () => {} });
+  // TimeZone UTC: invariante de tiempo del proyecto (ver src/lib/db/index.ts).
+  const sql = postgres(url, {
+    max: 1,
+    onnotice: () => {},
+    connection: { TimeZone: "UTC" },
+  });
   try {
     await migrate(drizzle(sql), { migrationsFolder });
     console.log("[migrate] migraciones aplicadas");

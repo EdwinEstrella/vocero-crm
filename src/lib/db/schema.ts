@@ -11,6 +11,15 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
+/**
+ * Tiempo: todas las columnas son `timestamp without time zone` y el marco es
+ * UTC. Drizzle lo respeta en ambas direcciones; `now()` de los `defaultNow()`
+ * solo lo respeta porque la conexión fija `TimeZone: "UTC"`
+ * (ver src/lib/db/index.ts). No cambies una columna a `timestamptz` de forma
+ * aislada: al leerla Drizzle seguiría añadiéndole "+0000" salvo que también
+ * lleve `{ withTimezone: true }`.
+ */
+
 /* ============================================================
  * Auth (Better Auth + plugin organization)
  * ============================================================ */

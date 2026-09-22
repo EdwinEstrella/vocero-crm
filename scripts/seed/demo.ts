@@ -6,6 +6,7 @@
 import { readFileSync } from "node:fs";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { PG_CONNECTION_OPTIONS } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import { seedDemo, isDomainEmpty } from "@/server/seed/demo";
 
@@ -26,7 +27,7 @@ if (!url) {
   process.exit(1);
 }
 
-const sql = postgres(url, { max: 1, onnotice: () => {} });
+const sql = postgres(url, { max: 1, ...PG_CONNECTION_OPTIONS });
 const db = drizzle(sql, { schema });
 
 const orgs = await db.select().from(schema.organization).limit(1);
