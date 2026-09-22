@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 const pedidos = new Map<string, number>();
 
 export async function GET(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ id: string }> }
 ) {
   const guard = mockGuard();
@@ -36,10 +36,17 @@ export async function GET(
       });
     }
     if (id === "creativo-redirige") {
-      // Un salto hacia un host que no es de Meta.
+      // Un salto hacia un origen que no es el permitido y que, si se siguiera,
+      // SÍ devolvería un PNG: este mismo servidor por otro nombre (localhost ↔
+      // 127.0.0.1). Así la prueba demuestra que el salto se revalida, y no que
+      // el destino falló; y no sale de la máquina.
+      const aqui = new URL(req.url);
+      const otro = aqui.hostname === "127.0.0.1" ? "localhost" : "127.0.0.1";
       return new Response(null, {
         status: 302,
-        headers: { location: "https://example.com/creativo.png" },
+        headers: {
+          location: `${aqui.protocol}//${otro}:${aqui.port}/api/dev/wa-mock/media-file/creativo-destino-del-salto`,
+        },
       });
     }
     const vez = (pedidos.get(id) ?? 0) + 1;
