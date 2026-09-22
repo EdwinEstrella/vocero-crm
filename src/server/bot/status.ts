@@ -115,7 +115,8 @@ export type FetchBrainHealthOptions = {
 
 /**
  * Pregunta al `/health` del cerebro externo. Nunca lanza: cualquier fallo es
- * `reachable: false` con su motivo, en 2 s como mucho.
+ * `reachable: false` con su motivo, en 2 s como mucho. Una URL que no es
+ * http(s) ni se intenta: `problem: "config"`.
  *
  * - No sigue redirecciones: el `/health` de un servicio interno no redirige,
  *   y seguirla sería pedirle al servidor que llame a donde diga otro.
@@ -134,12 +135,12 @@ export async function fetchBrainHealth(
   try {
     target = new URL(rawUrl);
   } catch {
-    return { reachable: false, host: "", checkedAt, problem: "network" };
+    return { reachable: false, host: "", checkedAt, problem: "config" };
+  }
+  if (target.protocol !== "http:" && target.protocol !== "https:") {
+    return { reachable: false, host: "", checkedAt, problem: "config" };
   }
   const base = { host: target.host, checkedAt };
-  if (target.protocol !== "http:" && target.protocol !== "https:") {
-    return { ...base, reachable: false, problem: "network" };
-  }
 
   const headers: Record<string, string> = { accept: "application/json" };
   if (target.username || target.password) {

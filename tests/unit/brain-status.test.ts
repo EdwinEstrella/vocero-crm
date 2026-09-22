@@ -178,6 +178,16 @@ describe("textos compartidos", () => {
     expect(externalDown(sinHealth)).toBe(false);
   });
 
+  it("con BRAIN_HEALTH_URL mal escrita no se le da por caído: manda la llamada reciente", () => {
+    const mal: BrainHealthDto = { reachable: false, host: "", checkedAt: NOW.toISOString(), problem: "config" };
+    const llamo = status({ botKeyConfigured: true, lastSeenAt: HACE_3_MIN, health: mal });
+    expect(externalDown(llamo)).toBe(false);
+    expect(externalAnswering(llamo)).toBe(true);
+    const callado = status({ botKeyConfigured: true, lastSeenAt: null, health: mal });
+    expect(externalDown(callado)).toBe(false);
+    expect(externalAnswering(callado)).toBe(false);
+  });
+
   it("haceCuanto", () => {
     const t = NOW.getTime();
     expect(haceCuanto(new Date(t - 20_000).toISOString(), t)).toBe("hace unos segundos");
@@ -391,6 +401,15 @@ describe("fetchBrainHealth", () => {
     await new Promise<void>((r) => libre.close(() => r()));
     const h = await fetchBrainHealth(`http://127.0.0.1:${port}/health`);
     expect(h).toMatchObject({ reachable: false, problem: "network", host: `127.0.0.1:${port}` });
+  });
+
+  it("una URL mal escrita ni se intenta → config, sin host", async () => {
+    const fetchImpl = vi.fn();
+    for (const url of ["nea:8000/health", "ftp://nea/health", "no es una url"]) {
+      const h = await fetchBrainHealth(url, { fetchImpl: fetchImpl as unknown as typeof fetch });
+      expect(h).toMatchObject({ reachable: false, host: "", problem: "config" });
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("un cuerpo enorme no se lee entero → invalid", async () => {

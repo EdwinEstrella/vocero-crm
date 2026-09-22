@@ -143,6 +143,15 @@ function externalView(s: BrainStatusDto, now: number): RowView {
           detail: "Al CRM le falta BOT_API_KEY: no puede contestar por la API.",
         };
   }
+  if (health?.problem === "config") {
+    return {
+      tone: "warn",
+      headline: "No se puede consultar su estado",
+      detail: `BRAIN_HEALTH_URL no es una URL http:// o https:// válida (p. ej. http://nea:8000/health): corrígela y vuelve a desplegar el CRM.${
+        keyConfigured ? ` ${capitalize(llamada)}.` : ""
+      }`,
+    };
+  }
   if (health) {
     const name = externalBrainName(s);
     return {

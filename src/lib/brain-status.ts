@@ -24,7 +24,9 @@ export type BrainHealthProblem =
   /** Contestó con una redirección; no se sigue. */
   | "redirect"
   /** 200, pero sin JSON o sin decir que está sano. */
-  | "invalid";
+  | "invalid"
+  /** `BRAIN_HEALTH_URL` no es una URL http(s): no se le preguntó a nadie. */
+  | "config";
 
 /** La cola de Nea hacia el CRM (el «relevo» de los webhooks). */
 export type BrainRelayDto = {
@@ -90,13 +92,20 @@ export function externalBrainName(status: BrainStatusDto): string | null {
  */
 export function externalAnswering(status: BrainStatusDto): boolean {
   const h = status.external.health;
-  return status.external.active && (h === null || h.reachable);
+  return status.external.active && (!healthKnown(h) || h.reachable);
 }
 
 /** Se le pregunta a su `/health` y no está en línea. */
 export function externalDown(status: BrainStatusDto): boolean {
   const h = status.external.health;
-  return h !== null && !h.reachable;
+  return healthKnown(h) && !h.reachable;
+}
+
+/** Su `/health` dice algo. Con `BRAIN_HEALTH_URL` mal escrita no se le pudo
+ *  preguntar: no se sabe si está en línea, y se juzga como si no hubiera URL
+ *  (por su última llamada), no como caído. */
+function healthKnown(h: BrainHealthDto | null): h is BrainHealthDto {
+  return h !== null && h.problem !== "config";
 }
 
 /** «Responde tu cerebro externo (Nea)», o sin paréntesis si no se sabe quién es. */

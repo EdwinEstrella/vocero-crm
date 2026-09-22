@@ -8,16 +8,6 @@ import { z } from "zod";
  * que en esa fase se aceptan placeholders — los valores reales llegan al boot.
  */
 
-/** http(s) y nada más. Zod corre el refine aunque `.url()` ya haya fallado,
- *  así que tampoco puede lanzar con un valor que no es URL. */
-function isHttpUrl(value: string): boolean {
-  try {
-    return /^https?:$/.test(new URL(value).protocol);
-  } catch {
-    return false;
-  }
-}
-
 const envSchema = z.object({
   APP_BASE_URL: z.string().url(),
   DATABASE_URL: z.string().min(1),
@@ -66,13 +56,11 @@ const envSchema = z.object({
   // «Quién responde a tus clientes»: el /health del cerebro externo (Nea),
   // consultado desde el servidor. Ej.: http://nea:8000/health (alias de la
   // red de Coolify). Sin ella, la tarjeta del Agente no pregunta a nadie.
-  BRAIN_HEALTH_URL: z
-    .string()
-    .url()
-    .refine(isHttpUrl, {
-      message: "BRAIN_HEALTH_URL debe empezar con http:// o https://",
-    })
-    .optional(),
+  // No se valida aquí a propósito: es opcional y solo de diagnóstico, y con
+  // `.url()` un valor mal escrito tumbaba el CRM entero (el entorno no
+  // validaba y todo respondía 503). La tarjeta la marca como problema de
+  // configuración y lo demás sigue funcionando (server/bot/status.ts).
+  BRAIN_HEALTH_URL: z.string().optional(),
   // 008: volumen local de adjuntos (constitución II: sin S3/R2).
   MEDIA_DIR: z.string().default("./.dev-media"),
   NODE_ENV: z.string().default("development"),
