@@ -7,8 +7,14 @@ import {
   BRAND_MARK_TAIL,
   isVoceroName,
 } from "@/lib/brand";
-import { faviconInitial } from "@/lib/favicon";
+import { faviconHref, faviconInitial } from "@/lib/favicon";
 import { cn } from "@/lib/utils";
+
+/**
+ * Lo que la marca necesita para dibujarse: el nombre, el acento y si hay
+ * logo subido (el acento entra en la URL versionada del icono generado).
+ */
+export type BrandingMark = Pick<Branding, "name" | "accent" | "favicon">;
 
 /**
  * El trazo de la marca: la "v" caligráfica con remate cian de vocerocrm.com.
@@ -43,25 +49,36 @@ export function BrandMark({
 }
 
 /**
- * Mosaico cuadrado con degradado del acento: es el favicon en grande. Con la
- * marca Vocero lleva la "v"; con un nombre white-label, la inicial.
+ * Mosaico cuadrado con degradado del acento: es el favicon en grande. Con un
+ * logo subido lleva el logo (el MISMO archivo y la MISMA URL versionada que
+ * la pestaña, así lo que se sube en Ajustes → Marca se ve en los dos sitios);
+ * sin él, la "v" de Vocero o la inicial del nombre white-label.
  */
 export function BrandTile({
   branding,
   className,
 }: {
-  branding: Pick<Branding, "name">;
+  branding: BrandingMark;
   className?: string;
 }) {
   return (
     <span
       className={cn(
-        "brand-tile flex shrink-0 items-center justify-center text-brand-fg",
+        "brand-tile flex shrink-0 items-center justify-center overflow-hidden text-brand-fg",
         className
       )}
       aria-hidden
     >
-      {isVoceroName(branding.name) ? (
+      {branding.favicon ? (
+        // Sin next/image a propósito: es un archivo de una ruta propia, ya
+        // pequeño; pasarlo por el optimizador sería trabajo para no ahorrar.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={faviconHref(branding)}
+          alt=""
+          className="h-full w-full object-contain"
+        />
+      ) : isVoceroName(branding.name) ? (
         <BrandMark className="h-[64%] w-[64%]" cyan={BRAND_CYAN_ON_TILE} />
       ) : (
         <span className="font-bold leading-none">{faviconInitial(branding.name)}</span>
@@ -88,18 +105,19 @@ const TILE_SIZE = {
 /**
  * La marca completa, como en la cabecera de la landing: trazo + wordmark
  * "vocero" en minúsculas y bien apretado. Una instancia rebautizada ve en su
- * lugar el mosaico con la inicial y su nombre (white-label).
+ * lugar el mosaico con la inicial y su nombre (white-label). Con logo subido
+ * gana el logo, se llame como se llame: quien sube un archivo quiere verlo.
  */
 export function BrandLogo({
   branding,
   size = "md",
   className,
 }: {
-  branding: Pick<Branding, "name">;
+  branding: BrandingMark;
   size?: keyof typeof WORDMARK_SIZE;
   className?: string;
 }) {
-  if (isVoceroName(branding.name)) {
+  if (isVoceroName(branding.name) && !branding.favicon) {
     return (
       <span className={cn("flex items-center gap-2 text-foreground", className)}>
         <BrandMark className={cn("shrink-0 text-brand", MARK_SIZE[size])} />

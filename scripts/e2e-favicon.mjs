@@ -1,10 +1,12 @@
 /**
- * Self-test E2E de comportamiento — icono de la pestaña
- * (guion tests/e2e/us-diseno-atlas.md, sección "icono").
+ * Self-test E2E de comportamiento — icono de la pestaña y logo de la barra
+ * (guion tests/e2e/us-diseno-atlas.md, secciones "icono" y "logo").
  *
  * Dos cosas se prueban aquí sobre todo: que TODA instancia tenga icono sin
  * configurar nada, y que no se pueda colar un documento haciéndolo pasar por
- * imagen — esto se sirve desde el mismo dominio que la app.
+ * imagen — esto se sirve desde el mismo dominio que la app. Y una tercera:
+ * que el logo que sube el dueño se vea donde se ve la marca (barra lateral,
+ * login), no solo en la pestaña.
  *
  * Uso: node --env-file=.env scripts/e2e-favicon.mjs
  */
@@ -41,6 +43,20 @@ const json = (path, opts = {}) =>
     ...opts,
     headers: { "content-type": "application/json", ...(opts.headers ?? {}) },
   });
+
+/**
+ * El HTML que pinta el servidor. La marca viaja en SSR (sin parpadeo), así
+ * que lo que dibujan la barra lateral y el login ya está en la respuesta.
+ */
+const paginaDe = async (path, { sesion = true } = {}) =>
+  (sesion ? await api(path) : await fetch(`${BASE}${path}`)).text();
+
+/**
+ * El mosaico de la marca dibujando un archivo: `<img src=…>`. La pestaña usa
+ * la misma URL pero en `<link href=…>`, así que no cuenta aquí.
+ */
+const LOGO_EN_MOSAICO = /<img[^>]*src="\/api\/branding\/favicon\?v=([^"&]+)"/;
+const versionEnMosaico = (html) => LOGO_EN_MOSAICO.exec(html)?.[1] ?? null;
 
 /** PNG de 1×1 real: sirve para probar el camino feliz de la carga. */
 const PNG_1X1 = Buffer.from(
@@ -114,6 +130,23 @@ ok(
   `${res.headers.get("content-type")} ${buf.length}B`
 );
 
+console.log("\n== El logo subido se ve también donde se ve la marca ==");
+// Antes solo cambiaba la pestaña: la barra lateral y el login seguían con la
+// inicial, y quien subía su logo no lo veía por ningún lado.
+const v1 = `u${subidaJson?.favicon?.version}`;
+let pagina = await paginaDe("/inbox");
+ok(
+  "la barra lateral lo dibuja, con la MISMA URL versionada que la pestaña",
+  versionEnMosaico(pagina) === v1,
+  `mosaico con ${versionEnMosaico(pagina) ?? "la inicial"}, esperado ${v1}`
+);
+pagina = await paginaDe("/login", { sesion: false });
+ok(
+  "el login también, sin sesión",
+  versionEnMosaico(pagina) === v1,
+  `mosaico con ${versionEnMosaico(pagina) ?? "la inicial"}, esperado ${v1}`
+);
+
 console.log("\n== No se cuela un documento disfrazado de imagen ==");
 const htmlComoPng = await api("/api/settings/branding/favicon", {
   method: "PUT",
@@ -165,6 +198,13 @@ ok(
   res.headers.get("content-type")?.includes("svg") && cuerpo.includes(">A<"),
   cuerpo.slice(0, 60)
 );
+pagina = await paginaDe("/inbox");
+ok(
+  "y la barra lateral vuelve a la inicial, sin imagen rota",
+  versionEnMosaico(pagina) === null &&
+    /class="brand-tile[^"]*"[^>]*><span[^>]*>A<\/span>/.test(pagina),
+  versionEnMosaico(pagina) ?? "sin la inicial en el mosaico"
+);
 
 console.log("\n== Quitar y volver a subir NO repite la URL ==");
 // El caso que importa: si la versión reiniciara, `?v=u1` sería la misma URL
@@ -188,6 +228,12 @@ ok(
   "la marca expone el icono nuevo",
   marca?.branding?.favicon?.version === otraJson.favicon.version,
   JSON.stringify(marca?.branding?.favicon)
+);
+pagina = await paginaDe("/inbox");
+ok(
+  "y la barra lateral pide el logo nuevo, no el que el navegador ya guardó",
+  versionEnMosaico(pagina) === `u${otraJson?.favicon?.version}`,
+  `mosaico con ${versionEnMosaico(pagina) ?? "la inicial"}`
 );
 
 console.log(

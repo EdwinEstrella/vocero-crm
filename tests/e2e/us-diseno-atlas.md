@@ -90,6 +90,27 @@ pestañas, el icono genérico del navegador las vuelve indistinguibles.
     ✅ Cambia al subir, al quitar y al cambiar nombre o acento.
     ✅ Quitar y volver a subir **no repite** una URL ya cacheada.
 
+## Logo en la barra lateral
+
+Automatizado en `scripts/e2e-favicon.mjs`, en la misma corrida que el icono.
+El archivo que sube el dueño es UNO y sirve para las dos cosas: antes solo
+cambiaba la pestaña, y la barra lateral seguía con la inicial.
+
+20. **El logo subido se ve donde se ve la marca**: barra lateral, barra
+    superior del teléfono, login y vista previa de Ajustes → Marca.
+    ✅ El mosaico lo dibuja con la MISMA URL versionada que la pestaña
+    (`?v=u<versión>`): al cambiarlo, la barra no se queda con el anterior.
+    ✅ El login también lo muestra, sin sesión.
+    ✅ Quitarlo devuelve la inicial en la barra, sin imagen rota.
+    ✅ Gana aunque la instancia se llame Vocero: quien sube un archivo quiere
+    verlo en lugar de la "v".
+    ✅ La vista previa de Ajustes → Marca lo sigue al subir y al quitar, sin
+    recargar (la marca llega por prop del servidor, que se refresca).
+21. **Un logo que no es cuadrado no se deforma.** `object-contain` dentro del
+    mosaico; lo que sobra lo rellena el degradado del acento. La tarjeta, que
+    ahora se llama «Logo del negocio», lo advierte: cuadrado y con fondo
+    transparente se ve mejor. (Capturas, no automatizado.)
+
 ## Fidelidad visual (juicio humano pendiente)
 
 Capturas en `docs/screenshots/` comparadas contra el handoff: layout 4
