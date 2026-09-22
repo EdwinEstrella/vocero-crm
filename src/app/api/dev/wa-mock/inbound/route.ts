@@ -30,6 +30,8 @@ const schema = z
     ctwaClid: z.string().optional(),
     adHeadline: z.string().optional(),
     adSourceId: z.string().optional(),
+    // 018 — o el `referral` entero, con la forma de Meta (image_url incluida)
+    referral: z.record(z.unknown()).optional(),
   })
   .refine((v) => v.from || v.fromUserId, {
     message: "Se requiere from o fromUserId",

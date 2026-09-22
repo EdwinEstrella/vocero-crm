@@ -25,7 +25,9 @@ Con `ATRIBUCION` ausente:
    responden **404** (no 403: aquí ese endpoint no existe).
 2. La pantalla `/settings/ads` responde 404 y Ajustes no la menciona.
 3. Un mensaje que **sí** viene de un anuncio se atiende como cualquier otro: la
-   conversación se crea, el mensaje se ve, y no se guarda ninguna atribución.
+   conversación se crea y el mensaje se ve. Desde 018 **el origen del anuncio se
+   ve igual** (titular en la lista), pero se guarda **sin** `ctwa_clid`: el
+   detalle dice `hasCtwaClid: false` y el valor no aparece en ninguna respuesta.
 
 Con `ATRIBUCION=on`, las mismas rutas responden con normalidad.
 
@@ -71,3 +73,53 @@ Con `ATRIBUCION=on`, las mismas rutas responden con normalidad.
    `events_received: 0`): el lead **se mueve igual** y se queda en su etapa
    nueva; la fila queda **fallida** con lo que dijo Meta. Ninguna conversión
    vale un movimiento de lead bloqueado.
+
+---
+
+## 018 — De qué anuncio llegó cada conversación (siempre visible)
+
+Automatizado en la sección `018` de `scripts/e2e-selftest.mjs` (datos, con la
+bandera **apagada y encendida**) y en `scripts/e2e-anuncio-origen-ui.mjs`
+(navegador: claro y oscuro, 1440 y 390 px). Los creativos los sirve el wa-mock
+(`/api/dev/wa-mock/media-file/creativo-*`), en el origen de
+`META_GRAPH_BASE_URL`: el único que la copia acepta fuera de los hosts de Meta,
+y solo con los mocks habilitados.
+
+### Captura
+
+1. Un primer mensaje con `referral` deja el anuncio en la lista (titular, id,
+   tipo) y en el detalle del contacto (enlace, texto, tipo de medio, fecha).
+2. `hasCtwaClid` es `true` solo con la bandera encendida; el valor del
+   `ctwa_clid` no aparece en ninguna respuesta, encendida o apagada.
+3. Un contacto sin fuente capturada que llegó de un anuncio tiene fuente
+   **deducida «anuncio»**; una publicación (`source_type: "post"`) se enseña pero
+   no cuenta como anuncio.
+4. La reentrega del mismo mensaje no lo duplica, y un segundo mensaje con **otro**
+   anuncio no cambia el primero.
+5. Un `referral` sin `source_id`, `ctwa_clid`, `headline` ni `source_url` no crea
+   anuncio, y el mensaje entra.
+
+### La imagen
+
+1. Se copia sola y se sirve como PNG por `/api/media/{id}` con sesión; sin
+   sesión, 401.
+2. Otra persona del mismo anuncio comparte la misma imagen.
+3. Un host que no es de Meta, una redirección a otro host, un SVG y una imagen de
+   más de 300 KB quedan **sin imagen**, con la tarjeta y el mensaje intactos.
+4. Una descarga que se cuelga una vez llega con el reintento; una que falla dos
+   veces llega sin imagen y **abrir el contacto la repara**.
+
+### En pantalla
+
+1. El renglón dice «Anuncio · titular»; el orgánico, nada.
+2. El filtro **Anuncios** aparece y deja solo las conversaciones de anuncio.
+3. El panel enseña la tarjeta con la imagen **cargada** (no un ícono roto),
+   «Ver anuncio» con el enlace https de Meta, «con video» en un anuncio de
+   video, y «Meta identificó el clic» solo con la bandera encendida.
+4. Una conversación orgánica no enseña tarjeta.
+5. La misma tarjeta sale en el cajón del trato del pipeline.
+6. A 390 px, la bandeja y el panel con la tarjeta no se desbordan a lo ancho.
+
+**Pendiente de verificación humana**: un clic real en un anuncio CTWA hacia un
+número conectado. El mock reproduce la forma del `referral` de la documentación
+de Meta, no un clic.
