@@ -253,8 +253,9 @@ async function main() {
     siembra.filter(([n]) => !conv[n]).map(([n]) => n).join(",")
   );
 
-  // El agente contesta a todos menos al que pidió un humano (ese escala sin
-  // decir nada: lo agarra el patrón de respaldo antes del modelo).
+  // El modelo contesta a todos menos al que pidió un humano: a ése lo agarra
+  // el patrón de respaldo antes del modelo, le avisa que lo comunica con una
+  // persona y lo escala.
   const contestadas = await hasta(async () => {
     for (const [n] of siembra) {
       if (n === 6) continue;
@@ -269,6 +270,17 @@ async function main() {
     return convs.find((c) => c.id === conv[6]?.id)?.handoffReason === "cliente";
   });
   ok("la que pidió un humano quedó escalada por el cliente", escalada);
+  let aviso = [];
+  await hasta(async () => {
+    aviso = ((await api(`/api/conversations/${conv[6]?.id}/messages`)).json?.messages ?? [])
+      .filter((m) => m.direction === "out" && m.origin === "ai");
+    return aviso.length > 0;
+  });
+  ok(
+    "y recibió el aviso del traspaso, no silencio",
+    aviso.length === 1 && /persona del equipo/.test(aviso[0]?.text ?? ""),
+    JSON.stringify(aviso.map((m) => m.text))
+  );
 
   // El creativo de R1 se copia en segundo plano: la fila por anuncio lo trae
   // cuando la copia terminó.
@@ -457,8 +469,10 @@ async function main() {
   ok("conversaciones nuevas: +9", d((f) => f.bot.conversations) === 9, `Δ=${d((f) => f.bot.conversations)}`);
   ok("«contestó el agente» se mide sobre las 9 con mensaje del cliente",
     d((f) => f.bot.aiReplyRate.sample) === 9, JSON.stringify(despues.bot.aiReplyRate));
-  ok("primera respuesta: +8 medidas (la escalada no tuvo respuesta del agente)",
-    d((f) => f.bot.firstResponseSample) === 8 && despues.bot.firstResponseSeconds !== null,
+  // El aviso del traspaso es un saliente con origen IA: la escalada también
+  // tuvo respuesta del agente, y a los segundos.
+  ok("primera respuesta: +9 medidas (también la escalada: su aviso del traspaso)",
+    d((f) => f.bot.firstResponseSample) === 9 && despues.bot.firstResponseSeconds !== null,
     `Δ=${d((f) => f.bot.firstResponseSample)} mediana=${despues.bot.firstResponseSeconds}`);
   ok("pasó a un humano: +1 «El cliente pidió un humano»", d((f) => escalo(f, "cliente")) === 1,
     JSON.stringify(despues.bot.handoffs));
