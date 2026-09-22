@@ -60,24 +60,79 @@ export async function testConnection(
   }
 }
 
+/** Respuesta de `GET {WABA}/subscribed_apps`: una entrada por app suscrita. */
+type SubscribedApps = {
+  data?: {
+    whatsapp_business_api_data?: { id?: string; name?: string; link?: string };
+    override_callback_uri?: string;
+  }[];
+};
+
+export type SubscribeOutcome = "subscribed" | "override_kept" | "failed";
+
 /**
  * Suscribe la app a la WABA tras guardar (necesario para recibir webhooks en
- * modo directo). Best-effort: en modo agencia el override lo configura el
- * backend de la agencia y esta llamada puede no aplicar.
+ * modo directo), SIN pisar un override de callback.
+ *
+ * Un `POST {WABA}/subscribed_apps` sin cuerpo no es inocuo: es justo como Meta
+ * documenta BORRAR el callback alterno de la WABA ("Delete WABA alternate
+ * callback") — los webhooks vuelven al callback del panel de la app. Si la
+ * WABA ya enruta a un override (el backend de una agencia, o un cerebro
+ * externo como Nea que recibe los webhooks directo de Meta), re-suscribir en
+ * cada "Guardar" —o al rotar el token— lo desconectaba en silencio. Por eso
+ * primero se consulta y, si alguna app tiene override, se respeta.
+ *
+ * Best-effort de punta a punta: si la consulta falla se suscribe como antes, y
+ * si la suscripción falla se registra y sigue. Jamás lanza.
  */
 export async function subscribeAppToWaba(
   wabaId: string,
   token: string
-): Promise<void> {
+): Promise<SubscribeOutcome> {
+  try {
+    const res = await graphRequest<SubscribedApps | null>(
+      `${wabaId}/subscribed_apps`,
+      { token }
+    );
+    const override = (Array.isArray(res?.data) ? res.data : [])
+      .map((app) => app?.override_callback_uri)
+      .find(
+        (uri): uri is string => typeof uri === "string" && uri.trim() !== ""
+      );
+    if (override) {
+      // Solo el host: la ruta de un webhook suele llevar un segmento secreto
+      // (el de Vocero es /api/webhooks/wa/<verify token>).
+      console.log(
+        `[connect] la WABA ${wabaId} enruta sus webhooks a un override (${hostOf(override)}): se respeta y no se re-suscribe la app`
+      );
+      return "override_kept";
+    }
+  } catch (err) {
+    console.warn(
+      "[connect] no se pudo consultar subscribed_apps; se suscribe igual (best-effort):",
+      err instanceof Error ? err.message : err
+    );
+  }
+
   try {
     await graphRequest(`${wabaId}/subscribed_apps`, {
       method: "POST",
       token,
     });
+    return "subscribed";
   } catch (err) {
     console.warn(
       "[connect] subscribed_apps falló (esperado en modo agencia):",
       err instanceof Error ? err.message : err
     );
+    return "failed";
+  }
+}
+
+function hostOf(uri: string): string {
+  try {
+    return new URL(uri).host || "host desconocido";
+  } catch {
+    return "URL no válida";
   }
 }

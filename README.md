@@ -97,6 +97,11 @@ Los 409 vienen tipados (`ai_paused`, `window_closed`, `sandbox_violation`) para
 que tu bot sepa si callarse, mandar plantilla o rendirse. El guion de pruebas
 está en [`tests/e2e/us-bot-api.md`](tests/e2e/us-bot-api.md).
 
+Si tu bot recibe los webhooks de Meta por un **override de callback de la
+WABA**, guardar la conexión en Configuración → WhatsApp (o rotar el token) lo
+respeta: Vocero ve el override en `GET /{WABA}/subscribed_apps` y no re-suscribe
+la app, que es justo lo que lo borraría.
+
 Agente de referencia: [nea-agent](https://github.com/kevinrivm/nea-agent), MIT.
 
 ### 📅 Agenda con huecos reales (opcional, apagada por defecto)
@@ -259,7 +264,8 @@ del cliente se conecta con el **override de callback por WABA**:
 
    La URL y el verify token exactos están en **Configuración → WhatsApp** de la
    instancia. Meta hace el handshake en ese momento (la URI debe responder, si
-   no devuelve 422).
+   no devuelve 422). Volver a guardar la conexión después (p. ej. al rotar el
+   token) respeta este override: Vocero no re-suscribe una WABA que ya lo tiene.
 5. **Registra el número** en la Cloud API si aún no lo está
    (`POST /{PHONE_NUMBER_ID}/register`) y manda un mensaje de prueba al número:
    debe aparecer en la bandeja en uno o dos segundos. Los mensajes del cliente
