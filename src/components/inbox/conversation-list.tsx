@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Search, Sparkles, UserRound, X } from "lucide-react";
+import { Megaphone, Search, Sparkles, UserRound, X } from "lucide-react";
 import type { ConversationDto } from "@/lib/types";
+import { etiquetaDeOrigen, titularDeOrigen } from "@/lib/anuncios";
 import { CHANNEL_LABEL, type Channel } from "@/lib/channels";
 import { ChannelBadge } from "@/components/channel-badge";
 import { matchesQuery } from "@/lib/search";
@@ -85,7 +86,7 @@ export function ConversationList({
   onSeeded: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "unread">("all");
+  const [filter, setFilter] = useState<"all" | "unread" | "anuncios">("all");
   const [stage, setStage] = useState<string>("all");
   const [inbox, setInbox] = useState<Channel | "all">("all");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -122,8 +123,24 @@ export function ConversationList({
   const inboxCount = (ch: Channel) =>
     searched.filter((c) => c.channel === ch).length;
   const unreadCount = inInbox.filter((c) => c.unreadCount > 0).length;
+  // 018: las que abrió un anuncio (o una publicación con botón de WhatsApp).
+  const deAnuncios = inInbox.filter((c) => c.anuncio !== null);
   const visible =
-    filter === "unread" ? inInbox.filter((c) => c.unreadCount > 0) : inInbox;
+    filter === "unread"
+      ? inInbox.filter((c) => c.unreadCount > 0)
+      : filter === "anuncios"
+        ? deAnuncios
+        : inInbox;
+  // Sin ninguna conversación de anuncio el filtro no aparece: a quien no
+  // anuncia no se le pinta un botón que siempre dice 0. Si está elegido, se
+  // queda, para poder salir de él aunque el contador baje a cero.
+  const filtros: { id: typeof filter; label: string; count: number }[] = [
+    { id: "all", label: "Todas", count: inInbox.length },
+    { id: "unread", label: "No leídas", count: unreadCount },
+  ];
+  if (deAnuncios.length > 0 || filter === "anuncios") {
+    filtros.push({ id: "anuncios", label: "Anuncios", count: deAnuncios.length });
+  }
   // Con un solo canal encendido no hay bandejas que distinguir: ni marca en
   // los renglones ni filtro. La pantalla queda exactamente como antes de 014.
   const multiChannel = channels.length > 1;
@@ -202,13 +219,11 @@ export function ConversationList({
         </div>
       </header>
 
-      <div className="flex items-center gap-1.5 border-b px-4 py-2.5">
-        {(
-          [
-            { id: "all", label: "Todas", count: inInbox.length },
-            { id: "unread", label: "No leídas", count: unreadCount },
-          ] as const
-        ).map((f) => (
+      {/* Envuelve: con el filtro de anuncios, los tres botones y el selector de
+          etapa no caben en una columna de 300-360 px, y el selector se
+          aplastaba hasta dejar solo la flecha. */}
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-2 border-b px-4 py-2.5">
+        {filtros.map((f) => (
           <button
             key={f.id}
             onClick={() => setFilter(f.id)}
@@ -341,6 +356,18 @@ export function ConversationList({
                           <span className="inline-flex items-center gap-1 rounded-full border border-warning-soft bg-warning-tint px-2 py-0.5 text-[11px] text-warning-text">
                             <UserRound className="h-3 w-3" strokeWidth={1.7} />
                             Atención humana
+                          </span>
+                        )}
+                        {c.anuncio && (
+                          <span
+                            className="inline-flex min-w-0 items-center gap-1 rounded-full border border-info-soft bg-info-tint px-2 py-0.5 text-[11px] text-info-text"
+                            title={titularDeOrigen(c.anuncio.headline, c.anuncio.sourceType)}
+                          >
+                            <Megaphone className="h-3 w-3 shrink-0" strokeWidth={1.7} />
+                            <span className="truncate">
+                              {etiquetaDeOrigen(c.anuncio.sourceType)}
+                              {c.anuncio.headline ? ` · ${c.anuncio.headline}` : ""}
+                            </span>
                           </span>
                         )}
                       </span>

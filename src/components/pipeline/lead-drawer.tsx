@@ -3,9 +3,16 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { MessageSquareText, X } from "lucide-react";
-import type { FichaDto, FichaValue, PriorityValue, StageDto } from "@/lib/types";
+import type {
+  AnuncioDto,
+  FichaDto,
+  FichaValue,
+  PriorityValue,
+  StageDto,
+} from "@/lib/types";
 import { formatMoneyCents, parseMoneyToCents } from "@/lib/money";
 import { cn, formatPhone } from "@/lib/utils";
+import { AnuncioOrigen } from "@/components/anuncio-origen";
 import { ContactAvatar } from "@/components/avatar";
 import { FichaPanel } from "@/components/ficha-panel";
 import { Button } from "@/components/ui/button";
@@ -41,6 +48,8 @@ export function LeadDrawer({
   onPriority: (value: PriorityValue | null) => void;
 }) {
   const [ficha, setFicha] = useState<FichaDto>({});
+  // 018: de qué anuncio llegó; null si escribió por su cuenta.
+  const [anuncio, setAnuncio] = useState<AnuncioDto | null>(null);
   const [monto, setMonto] = useState("");
   const [editandoMonto, setEditandoMonto] = useState(false);
 
@@ -52,7 +61,11 @@ export function LeadDrawer({
       .then((r) => (r.ok ? r.json() : null))
       .catch(() => null);
     setFicha(detail?.contact?.ficha ?? {});
+    setAnuncio(detail?.anuncio ?? null);
   }, [contactId]);
+
+  // Al abrir otro trato no puede asomarse el anuncio del anterior.
+  useEffect(() => setAnuncio(null), [contactId]);
 
   useEffect(() => {
     setEditandoMonto(false);
@@ -147,6 +160,12 @@ export function LeadDrawer({
               <p className="mt-3 text-xs text-text-3">
                 Todavía no hay conversación con este contacto.
               </p>
+            )}
+
+            {anuncio && (
+              <div className="mt-3">
+                <AnuncioOrigen anuncio={anuncio} />
+              </div>
             )}
           </section>
 

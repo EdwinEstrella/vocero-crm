@@ -4,12 +4,14 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Check, ChevronRight, Sparkles, UserRound } from "lucide-react";
 import type {
+  AnuncioDto,
   ConversationDto,
   FichaDto,
   FichaValue,
   StageDto,
 } from "@/lib/types";
 import { cn, formatPhone } from "@/lib/utils";
+import { AnuncioOrigen } from "@/components/anuncio-origen";
 import { ContactAvatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -46,6 +48,8 @@ export function ContactPanel({
   const [stages, setStages] = useState<StageDto[]>([]);
   const [currentStageId, setCurrentStageId] = useState<string | null>(null);
   const [leadId, setLeadId] = useState<string | null>(null);
+  // 018: de qué anuncio llegó; null si escribió por su cuenta.
+  const [anuncio, setAnuncio] = useState<AnuncioDto | null>(null);
   // Estado global del agente: sin esto, el toggle "Respondiendo" mentiría
   // cuando el agente aún no se ha configurado/encendido.
   const [agentEnabled, setAgentEnabled] = useState(false);
@@ -71,6 +75,7 @@ export function ContactPanel({
       setFicha(detail.contact?.ficha ?? {});
       setCurrentStageId(detail.stage?.id ?? null);
       setLeadId(detail.lead?.id ?? null);
+      setAnuncio(detail.anuncio ?? null);
     }
     if (stagesRes) setStages(stagesRes.stages);
     setAgentEnabled(Boolean(agentRes?.profile?.enabled));
@@ -92,6 +97,9 @@ export function ContactPanel({
       setFicha(detail.contact?.ficha ?? {});
       setCurrentStageId(detail.stage?.id ?? null);
       setLeadId(detail.lead?.id ?? null);
+      // La imagen del creativo se copia después de que entra el mensaje: este
+      // refetch en vivo es lo que la hace aparecer sin recargar.
+      setAnuncio(detail.anuncio ?? null);
     }
     if (agentRes) {
       setAgentEnabled(Boolean(agentRes.profile?.enabled));
@@ -101,6 +109,8 @@ export function ContactPanel({
 
   useEffect(() => {
     setNotesLoaded(false);
+    // Al cambiar de contacto no puede asomarse el anuncio del anterior.
+    setAnuncio(null);
     void refetch();
   }, [refetch]);
 
@@ -250,6 +260,12 @@ export function ContactPanel({
               </div>
             )}
           </div>
+
+          {anuncio && (
+            <div className="mt-3">
+              <AnuncioOrigen anuncio={anuncio} />
+            </div>
+          )}
         </section>
 
         {/* Stepper de etapa */}
