@@ -381,7 +381,7 @@ export function InboxClient({ channels }: { channels: readonly Channel[] }) {
           "shrink-0 overflow-hidden border-l transition-[width] duration-200",
           // Debajo de xl no hay ancho para una tercera columna: el panel se
           // vuelve un cajón que entra desde la derecha, encima del hilo.
-          "max-xl:fixed max-xl:inset-y-0 max-xl:right-0 max-xl:z-40 max-xl:w-auto max-xl:bg-background max-xl:transition-transform",
+          "max-xl:fixed max-xl:inset-y-0 max-xl:right-0 max-xl:z-40 max-xl:w-auto max-xl:bg-popover max-xl:transition-transform",
           panelOpen && selected
             ? "w-[320px] max-xl:translate-x-0 max-xl:shadow-pop"
             : "w-0 border-l-0 max-xl:translate-x-full"

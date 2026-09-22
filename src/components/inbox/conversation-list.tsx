@@ -304,7 +304,7 @@ export function ConversationList({
                         <span
                           className={cn(
                             "shrink-0 font-mono text-[10.5px] tracking-[0.02em]",
-                            unread ? "font-semibold text-brand" : "text-text-3"
+                            unread ? "font-semibold text-brand-ink" : "text-text-3"
                           )}
                         >
                           {formatTime(c.lastMessageAt)}

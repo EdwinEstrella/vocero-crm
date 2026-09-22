@@ -90,7 +90,7 @@ export function BlockDialog({
       <form
         onSubmit={submit}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm space-y-4 rounded-lg border bg-card p-5 shadow-pop"
+        className="w-full max-w-sm space-y-4 rounded-lg border bg-popover p-5 shadow-pop"
       >
         <div>
           <h3 id="bloquear-titulo" className="text-[16px] font-bold">

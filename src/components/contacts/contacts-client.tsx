@@ -253,7 +253,7 @@ export function ContactsClient() {
           aria-modal="true"
           aria-label="Escribir primero"
         >
-          <div className="w-full max-w-md rounded-lg border bg-card p-4 shadow-pop">
+          <div className="w-full max-w-md rounded-lg border bg-popover p-4 shadow-pop">
             <div className="mb-3 flex items-baseline justify-between gap-2">
               <h3 className="font-semibold">
                 Escribir a {escribiendo.name}
@@ -311,7 +311,7 @@ function EditDialog({
       onClick={onClose}
     >
       <div
-        className="max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-lg border bg-card p-5 shadow-xl"
+        className="max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-lg border bg-popover p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="mb-4 font-semibold">Editar contacto</h3>

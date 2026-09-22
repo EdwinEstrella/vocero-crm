@@ -61,7 +61,7 @@ function MediaBlock({ media }: { media: MessageMediaDto }) {
           )}
           {coords && (
             <a
-              className="text-[12.5px] text-brand underline-offset-2 hover:underline"
+              className="text-[12.5px] text-brand-ink underline-offset-2 hover:underline"
               href={`https://maps.google.com/?q=${loc.latitude},${loc.longitude}`}
               target="_blank"
               rel="noreferrer noopener"
@@ -257,7 +257,7 @@ export function MessageThread({ messages }: { messages: MessageDto[] }) {
                 <span className="float-right ml-2 mt-1 flex items-center gap-1">
                   {m.aiGenerated && (
                     <span
-                      className="inline-flex items-center gap-0.5 text-[10px] font-medium text-brand"
+                      className="inline-flex items-center gap-0.5 text-[10px] font-medium text-brand-ink"
                       title="Respuesta generada por IA"
                     >
                       <Sparkles className="h-3 w-3" strokeWidth={1.7} /> IA
