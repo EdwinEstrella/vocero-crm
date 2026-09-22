@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CalendarSettings } from "@/server/agenda/settings";
 
 /**
@@ -91,8 +91,16 @@ vi.mock("@/server/agenda/offers", async (importOriginal) => ({
   replaceOffers: h.replaceOffers,
 }));
 
+let GET: typeof import("@/app/api/bot/availability/route").GET;
+
+// La ruta se importa una vez y fuera de los casos: su primer import carga
+// medio servidor y, con la máquina ocupada, se comía los 5 s del primer caso
+// (y el segundo caía en cascada con la oferta a medio registrar).
+beforeAll(async () => {
+  ({ GET } = await import("@/app/api/bot/availability/route"));
+}, 60_000);
+
 async function pedir(qs: string) {
-  const { GET } = await import("@/app/api/bot/availability/route");
   const res = await GET(new Request(`http://crm.test/api/bot/availability?${qs}`));
   let json: Record<string, unknown> | null = null;
   try {
