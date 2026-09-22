@@ -24,6 +24,19 @@ function contrast(a: string, b: string): number {
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
 }
 
+/** Variables de un bloque de globals.css, con el valor sin saltos de línea. */
+function variables(css: string, selector: string): Record<string, string> {
+  const inicio = css.indexOf(selector);
+  expect(inicio, `no está el bloque ${selector}`).toBeGreaterThanOrEqual(0);
+  const cuerpo = css.slice(css.indexOf("{", inicio) + 1, css.indexOf("}", inicio));
+  return Object.fromEntries(
+    [...cuerpo.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [
+      m[1]!,
+      m[2]!.replace(/\s+/g, " ").trim(),
+    ])
+  );
+}
+
 describe("white-label: acento", () => {
   it("preset devuelve el set exacto del handoff", () => {
     expect(resolveAccentSet("#3f5972")).toEqual(ACCENT_PRESETS["#3f5972"]!.set);
@@ -112,19 +125,6 @@ describe("white-label: acento en tema oscuro", () => {
 });
 
 describe("white-label: barra lateral bicolor (.nav-dark)", () => {
-  /** Variables de un bloque de globals.css, con el valor sin saltos de línea. */
-  function variables(css: string, selector: string): Record<string, string> {
-    const inicio = css.indexOf(selector);
-    expect(inicio, `no está el bloque ${selector}`).toBeGreaterThanOrEqual(0);
-    const cuerpo = css.slice(css.indexOf("{", inicio) + 1, css.indexOf("}", inicio));
-    return Object.fromEntries(
-      [...cuerpo.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [
-        m[1]!,
-        m[2]!.replace(/\s+/g, " ").trim(),
-      ])
-    );
-  }
-
   it("la barra lleva SIEMPRE el acento calculado para fondo oscuro", () => {
     // Es azul marino aunque la página esté en claro: con el acento del tema
     // claro, un color pensado para fondo blanco se hundiría en ella.
@@ -148,6 +148,40 @@ describe("white-label: barra lateral bicolor (.nav-dark)", () => {
     for (const [nombre, valor] of Object.entries(nav)) {
       expect(oscuro[nombre], nombre).toBe(valor);
     }
+  });
+});
+
+describe("tema oscuro: las superficies se distinguen", () => {
+  // Con los tokens de antes, lista, hilo y barra eran tres azules marino casi
+  // iguales: bordes a 1.26:1 del fondo y chips del mismo color que su fila.
+  // Se afirma sobre legibilidad, no sobre un hex: el que retoque el tema
+  // oscuro puede mover los valores, no el piso.
+  const css = readFileSync("src/app/globals.css", "utf8");
+  const oscuro = variables(css, ':root[data-theme="dark"] {');
+  const claro = variables(css, ":root {");
+  const tono = (nombre: string) => oscuro[nombre] ?? `falta ${nombre}`;
+
+  it("los bordes separan las columnas: ≥ 1.6:1 contra el fondo", () => {
+    expect(contrast(tono("--border"), tono("--bg"))).toBeGreaterThanOrEqual(1.6);
+    expect(contrast(tono("--border-strong"), tono("--bg"))).toBeGreaterThan(
+      contrast(tono("--border"), tono("--bg"))
+    );
+  });
+
+  it("el chip y la fila bajo el cursor se ACLARAN respecto al fondo", () => {
+    // Contra --bg, que es el de la lista: un chip o un hover más oscuros se
+    // leen como un hueco, no como una superficie.
+    const blanco = "#ffffff";
+    for (const nombre of ["--chip-bg", "--row-hover", "--bg-hover"]) {
+      expect(contrast(tono(nombre), blanco), nombre).toBeLessThan(
+        contrast(tono("--bg"), blanco)
+      );
+    }
+  });
+
+  it("en claro, chips y hover se ven igual que antes", () => {
+    expect(claro["--chip-bg"]).toBe(claro["--bg"]);
+    expect(claro["--row-hover"]).toBe(claro["--bg-subtle"]);
   });
 });
 
