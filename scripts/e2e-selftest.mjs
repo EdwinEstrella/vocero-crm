@@ -1227,6 +1227,7 @@ async function main() {
   await agendaChecks();
   await atribucionChecks();
   await anuncioDeOrigenChecks();
+  await r11BotChecks();
 
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
@@ -2689,4 +2690,64 @@ async function anuncioDeOrigenChecks() {
   );
   const reparada = convFalla ? await imagenDe(convFalla.contact.id, 16000) : null;
   ok("y abrir el contacto la repara en segundo plano", !!reparada, "la imagen no se reparó");
+}
+
+/* ============================================================
+ * R11 — Robustez de la API del bot (sección autocontenida)
+ *
+ * Cada parte dice qué rompía antes. Todo lleva un sufijo por corrida:
+ * re-correr contra la misma base (o dentro de la ventana del limitador) no
+ * puede medir lo de la corrida anterior.
+ * ============================================================ */
+async function r11BotChecks() {
+  const RUN = Date.now().toString().slice(-6);
+
+  /*
+   * 1. Una inundación sin key desde UNA IP no le quita el turno al cerebro.
+   *    Antes: un cubo global contado ANTES de autenticar → 429 para Nea el
+   *    resto de la ventana, y clientes sin respuesta.
+   */
+  console.log("\n== R11: 700 requests sin key desde una IP vs. el cerebro ==");
+  const deReferencia = ((await api("/api/conversations")).json?.conversations ?? [])[0];
+  ok("hay una conversación para que el cerebro pregunte", Boolean(deReferencia));
+  // Una IP por corrida: la de la corrida anterior puede seguir frenada.
+  const IP = `10.${Number(RUN.slice(0, 2))}.${Number(RUN.slice(2, 4))}.${Number(RUN.slice(4, 6))}`;
+  const intento = (key, ip = IP) =>
+    fetch(`${BASE}/api/bot/context?conversationId=${deReferencia?.id}`, {
+      headers: { "x-forwarded-for": ip, ...(key ? { "x-api-key": key } : {}) },
+    }).then((r) => r.status);
+  const vistos = {};
+  const cerebroDurante = [];
+  for (let lote = 0; lote < 14; lote++) {
+    const fallidos = Array.from({ length: 50 }, (_, i) =>
+      intento(i % 2 ? "clave-equivocada-0123456789" : undefined)
+    );
+    // El cerebro pregunta EN MEDIO de la inundación, desde otra IP y desde
+    // la misma (mismo proxy, o sin proxy donde todo es "local").
+    const cerebro = lote === 7 ? [intento(BOT_KEY, "10.255.0.1"), intento(BOT_KEY)] : [];
+    const [estados, deCerebro] = await Promise.all([
+      Promise.all(fallidos),
+      Promise.all(cerebro),
+    ]);
+    for (const s of estados) vistos[s] = (vistos[s] ?? 0) + 1;
+    cerebroDurante.push(...deCerebro);
+  }
+  ok(
+    "la inundación: 30 → 401 y las otras 670 → 429 (frenada por IP)",
+    vistos[401] === 30 && vistos[429] === 670,
+    JSON.stringify(vistos)
+  );
+  ok(
+    "el cerebro DURANTE la inundación → 200 (otra IP y la misma)",
+    cerebroDurante.length === 2 && cerebroDurante.every((s) => s === 200),
+    JSON.stringify(cerebroDurante)
+  );
+  const despues = [await intento(BOT_KEY, "10.255.0.1"), await intento(BOT_KEY)];
+  ok(
+    "el cerebro DESPUÉS de la inundación → 200",
+    despues.every((s) => s === 200),
+    JSON.stringify(despues)
+  );
+  const otraIp = await intento(undefined, `10.254.${Number(RUN.slice(2, 4))}.${Number(RUN.slice(4, 6))}`);
+  ok("otra IP sin key sigue en 401 (el freno es por IP, no global)", otraIp === 401, `status=${otraIp}`);
 }
