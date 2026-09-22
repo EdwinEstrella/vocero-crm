@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
 type Profile = {
@@ -79,29 +80,15 @@ export function AgentClient() {
           <span className="text-sm text-muted-foreground">
             {profile.enabled ? "Encendido" : "Apagado"}
           </span>
-          <button
-            role="switch"
-            aria-checked={profile.enabled}
-            aria-label="Agente encendido"
+          {/* El interruptor compartido (#53): el pomo propio de aquí era
+              `absolute` sin `left`, arrancaba del centro de la pista y
+              encendido quedaba afuera. */}
+          <Switch
+            checked={profile.enabled}
             disabled={!aiConfigured}
-            onClick={() => void saveProfile({ enabled: !profile.enabled })}
-            className={`relative h-6 w-11 rounded-full transition-colors disabled:opacity-40 ${
-              profile.enabled ? "bg-brand" : "bg-border-strong"
-            }`}
-          >
-            {/*
-              `shadow-sm` no es adorno: el pomo es blanco (`--knob`) y sobre el
-              fondo encendido se perdía, así que el interruptor parecía una
-              pastilla sólida sin control (#53). El de la bandeja ya la
-              llevaba; este era el único del producto sin ella. Mismos tokens
-              que allí, para que no vuelvan a divergir.
-            */}
-            <span
-              className={`absolute top-0.5 h-5 w-5 rounded-full bg-knob shadow-sm transition-transform ${
-                profile.enabled ? "translate-x-5" : "translate-x-0.5"
-              }`}
-            />
-          </button>
+            label="Agente encendido"
+            onCheckedChange={(enabled) => void saveProfile({ enabled })}
+          />
         </div>
       </header>
 

@@ -8,7 +8,9 @@
  *  - el panel de detalles flota sobre el hilo en vez de robarle ancho;
  *  - ninguna pantalla recorta contenido a lo ancho (main no desborda);
  *  - los campos de texto miden ≥16px (si no, iOS hace zoom y descuadra todo);
- *  - en escritorio NADA de lo anterior cambia (el lateral sigue fijo).
+ *  - en escritorio NADA de lo anterior cambia (el lateral sigue fijo);
+ *  - la barra lateral es azul marino también con el tema claro, y el pomo de
+ *    los interruptores queda dentro de su pista, encendido y apagado (#53).
  *
  * Uso: node scripts/e2e-responsive.mjs
  * Requiere: app corriendo (pnpm dev) con WA_MOCK_ENABLED=true y Playwright.
@@ -314,6 +316,111 @@ ok(
   JSON.stringify(tres)
 );
 await desk.screenshot({ path: `${SHOTS}/desktop-inbox.png` });
+
+console.log("\n== 7. Barra bicolor e interruptores (#53) ==");
+// Luminancia relativa (WCAG) de un `rgb(...)` calculado: se afirma que la
+// barra es OSCURA y la página CLARA, no un hex concreto que un ajuste de
+// tokens cambiaría.
+const luminancia = (rgb) => {
+  const [r, g, b] = (rgb.match(/\d+(\.\d+)?/g) ?? []).slice(0, 3).map((v) => {
+    const c = Number(v) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+// El contexto no manda la cookie de tema: la página está en claro.
+const barra = await desk.evaluate(() => {
+  const aside = document.querySelector("aside");
+  return {
+    tema: document.documentElement.dataset.theme,
+    fondo: aside ? getComputedStyle(aside).backgroundColor : "",
+    tinta: aside ? getComputedStyle(aside).color : "",
+    pagina: getComputedStyle(document.body).backgroundColor,
+  };
+});
+ok(
+  "con el tema claro, la barra lateral es azul marino y su texto claro",
+  barra.tema === "light" &&
+    luminancia(barra.fondo) < 0.05 &&
+    luminancia(barra.tinta) > 0.6 &&
+    luminancia(barra.pagina) > 0.8,
+  JSON.stringify(barra)
+);
+
+/** Dónde queda el pomo respecto a su pista (px). */
+const medirInterruptor = (page, nombre) =>
+  page.evaluate((label) => {
+    const pista = document.querySelector(`[role="switch"][aria-label="${label}"]`);
+    const pomo = pista?.querySelector("span");
+    if (!pista || !pomo) return null;
+    const p = pista.getBoundingClientRect();
+    const k = pomo.getBoundingClientRect();
+    const r = (n) => Math.round(n * 10) / 10;
+    return {
+      on: pista.getAttribute("aria-checked") === "true",
+      izq: r(k.left - p.left),
+      der: r(p.right - k.right),
+      arriba: r(k.top - p.top),
+      abajo: r(p.bottom - k.bottom),
+    };
+  }, nombre);
+// Dentro de la pista por los cuatro lados, y pegado al extremo de su estado.
+// El pomo que arrancaba del centro (#53) tenía `izq` ≈ 12 apagado y `der` < 0
+// encendido.
+const pomoEnSuSitio = (m) =>
+  m !== null &&
+  m.izq >= 0 && m.der >= 0 && m.arriba >= 0 && m.abajo >= 0 &&
+  (m.on ? m.der <= 3 : m.izq <= 3);
+
+async function probarInterruptor(page, nombre) {
+  const sw = page.locator(`[role="switch"][aria-label="${nombre}"]`);
+  await sw.waitFor({ timeout: 20000 });
+  const revisar = async (cuando) => {
+    // La transición dura 150 ms: se espera a que el pomo llegue.
+    const bien = await until(async () => pomoEnSuSitio(await medirInterruptor(page, nombre)), 3000);
+    const m = await medirInterruptor(page, nombre);
+    ok(
+      `«${nombre}» ${m?.on ? "encendido" : "apagado"} (${cuando}): el pomo queda dentro, en su extremo`,
+      bien,
+      JSON.stringify(m)
+    );
+    return m?.on;
+  };
+  const inicial = await revisar("al cargar");
+  if (await sw.isDisabled()) {
+    // El del Agente sin OPENROUTER_API_TOKEN: atenuado y sin reaccionar, a
+    // propósito. Se mide, pero no hay nada que alternar.
+    console.log(`  · «${nombre}» deshabilitado (sin proveedor de IA): solo se mide`);
+    return;
+  }
+  await sw.click();
+  ok(
+    `«${nombre}»: un clic lo cambia`,
+    await until(async () => (await medirInterruptor(page, nombre))?.on === !inicial, 15000)
+  );
+  await revisar("tras el clic");
+  // De vuelta como estaba, y con el teclado: es un <button>, Espacio lo opera.
+  await sw.focus();
+  await page.keyboard.press("Space");
+  ok(
+    `«${nombre}»: con el teclado vuelve a como estaba`,
+    await until(async () => (await medirInterruptor(page, nombre))?.on === inicial, 15000)
+  );
+}
+
+// Estado conocido para la conversación: IA activa y sin traspaso pendiente.
+const convResp = (await (await req.get(`${BASE}/api/conversations`)).json())
+  .conversations.find((c) => c.contact.name === NAME);
+await req.patch(`${BASE}/api/conversations/${convResp?.id}`, {
+  data: { reactivate: true, aiEnabled: true },
+});
+await desk.goto(`${BASE}/inbox`);
+await desk.getByText(NAME).first().click();
+await probarInterruptor(desk, "IA en esta conversación");
+
+await desk.goto(`${BASE}/agent`, { waitUntil: "domcontentloaded" });
+await probarInterruptor(desk, "Agente encendido");
+await desk.screenshot({ path: `${SHOTS}/desktop-agente.png` });
 
 console.log(
   failures === 0
