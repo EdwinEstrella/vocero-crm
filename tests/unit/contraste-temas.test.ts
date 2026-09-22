@@ -97,12 +97,13 @@ describe("tema oscuro: el bicolor no desaparece", () => {
 });
 
 describe("tema oscuro: escalera de superficies", () => {
-  it("hueco < página < fila bajo el cursor < lo que flota < panel < hover", () => {
+  it("hueco < página < fila bajo el cursor ≈ lo que flota < chip < panel < hover", () => {
     arriba(oscuro, "--bg", "--bg-subtle");
     arriba(oscuro, "--row-hover", "--bg");
     arriba(oscuro, "--bg-raised", "--bg");
-    arriba(oscuro, "--bg-panel", "--bg-raised");
     arriba(oscuro, "--chip-bg", "--row-hover");
+    arriba(oscuro, "--bg-panel", "--chip-bg");
+    arriba(oscuro, "--bg-panel", "--bg-raised");
     arriba(oscuro, "--bg-hover", "--bg-panel");
   });
 
@@ -116,7 +117,11 @@ describe("tema oscuro: escalera de superficies", () => {
     piso(oscuro, "--chip-bg", "--bg", 1.15);
     piso(oscuro, "--chip-bg", "--row-hover", 1.07);
     piso(oscuro, "--bg-hover", "--bg", 1.35);
-    piso(oscuro, "--bg-hover", "--bg-panel", 1.1);
+    // El contador dentro de un chip de filtro (bg-secondary sobre bg-chip):
+    // antes 1.01:1, el círculo no se veía.
+    piso(oscuro, "--bg-panel", "--chip-bg", 1.1);
+    // Como en claro (1.03:1), el hover de un botón secundario es sutil.
+    piso(oscuro, "--bg-hover", "--bg-panel", 1.05);
     piso(oscuro, "--bg-hover", "--bg-raised", 1.25);
     // 215 — el horario no hábil contra la rejilla (bg-card = --bg).
     piso(oscuro, "--bg", "--cal-off", 1.08);

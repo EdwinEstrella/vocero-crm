@@ -118,10 +118,10 @@
        el papel gris del tema claro. */
     --bg-subtle: #141c30;
     --bg: #1c263c;
-    --row-hover: #222d46;
+    --row-hover: #212c45;
     --bg-raised: #222d47;
-    --bg-panel: #293651;
-    --chip-bg: #27344f;
+    --chip-bg: #26334d;
+    --bg-panel: #2c3a57;
     --bg-hover: #2f3d5e;
     /* 215 — Lo no hábil del calendario: el mismo hueco que en claro. */
     --cal-off: #141c30;
