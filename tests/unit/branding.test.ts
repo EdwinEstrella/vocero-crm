@@ -111,6 +111,46 @@ describe("white-label: acento en tema oscuro", () => {
   });
 });
 
+describe("white-label: barra lateral bicolor (.nav-dark)", () => {
+  /** Variables de un bloque de globals.css, con el valor sin saltos de línea. */
+  function variables(css: string, selector: string): Record<string, string> {
+    const inicio = css.indexOf(selector);
+    expect(inicio, `no está el bloque ${selector}`).toBeGreaterThanOrEqual(0);
+    const cuerpo = css.slice(css.indexOf("{", inicio) + 1, css.indexOf("}", inicio));
+    return Object.fromEntries(
+      [...cuerpo.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [
+        m[1]!,
+        m[2]!.replace(/\s+/g, " ").trim(),
+      ])
+    );
+  }
+
+  it("la barra lleva SIEMPRE el acento calculado para fondo oscuro", () => {
+    // Es azul marino aunque la página esté en claro: con el acento del tema
+    // claro, un color pensado para fondo blanco se hundiría en ella.
+    const css = accentCssVariables("#3f5972");
+    const nav = /\.nav-dark\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(nav).toContain(`--accent:${resolveAccentSet("#3f5972", "dark").accent};`);
+    expect(nav).toContain(`--accent-fg:${resolveAccentSet("#3f5972", "dark").fg};`);
+    expect(nav).not.toContain(resolveAccentSet("#3f5972", "light").accent);
+  });
+
+  it("sus neutros son los del tema oscuro, uno por uno", () => {
+    // `.nav-dark` redeclara a mano los neutros del bloque oscuro. Si alguien
+    // retoca uno y no el otro, la barra se despega del resto del tema oscuro
+    // sin que nada truene: aquí se cae.
+    const css = readFileSync("src/app/globals.css", "utf8");
+    const oscuro = variables(css, ':root[data-theme="dark"] {');
+    const nav = variables(css, ".nav-dark {");
+    expect(Object.keys(nav)).toEqual(
+      expect.arrayContaining(["--bg", "--bg-subtle", "--text", "--text-3", "--border"])
+    );
+    for (const [nombre, valor] of Object.entries(nav)) {
+      expect(oscuro[nombre], nombre).toBe(valor);
+    }
+  });
+});
+
 describe("white-label: normalización", () => {
   it("nombre vacío o nulo → default 'Vocero'; se recorta a 30", () => {
     expect(normalizeBranding(null).name).toBe("Vocero");
