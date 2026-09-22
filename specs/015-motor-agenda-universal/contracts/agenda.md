@@ -117,20 +117,65 @@ Sin llave configurada, 401 en toda la superficie — igual que el resto de
 `/api/bot/*`. Con `AGENDA` apagada, 404 (la bandera se evalúa antes que la
 llave: el endpoint no existe).
 
-### `GET /api/bot/availability?conversationId=cv_…&limit=12&perDay=3&days=5`
+### `GET /api/bot/availability?conversationId=cv_…&limit=12&perDay=3&days=5[&date=YYYY-MM-DD]`
 
 Devuelve los huecos **y registra la oferta** para esa conversación (reemplazo
 completo). Con `perDay`, reparte entre días: el **catálogo reservable**
 (`limit`) es más ancho que el **menú** que el agente muestra — guardar solo lo
 mostrado dejó al agente sin nada que ofrecer cuando el lead pedía otro día.
 
-- `200` → `{ "slots": [{ "startUtc", "endUtc", "label", "dayIso", "dayLabel",
-  "time" }], "diasConAgenda": ["2026-09-01", …] }` — los días ausentes NO
-  tienen agenda: no los inventes.
+Sin `date` es un **reparto**: hasta `perDay` horas de cada día (las primeras),
+hasta `limit` en total, dentro de los próximos `days` días. Lo que falta en la
+lista no está necesariamente ocupado, y `query` dice hasta dónde llega:
+
+```json
+{
+  "slots": [{ "startUtc", "endUtc", "label", "dayIso", "dayLabel", "time" }],
+  "diasConAgenda": ["2026-09-21", "2026-09-22", …],
+  "query": {
+    "date": null,
+    "status": null,
+    "coveredUntil": "2026-09-24",
+    "horizonEnd": "2026-09-28",
+    "perDay": 3
+  }
+}
+```
+
+- un día **después** de `coveredUntil` no se revisó (si el reparto no se
+  llenó, `coveredUntil` es el fin de la ventana: lo ausente sí está cerrado);
+- un día que aparece puede tener **más horas** que las `perDay` enseñadas;
+- `horizonEnd` es el último día agendable (hoy + `maxDaysAhead`).
+
+Para contestar «¿mañana en la tarde?» o «¿el jueves a las 11?» se pide **ese
+día** con `date` (fecha en la zona del negocio). Devuelve sus horas libres
+—**todas** hasta 24; si hay más, 24 repartidas a lo largo del día, primera y
+última incluidas— con la misma forma, y `query.date` = el día pedido,
+`coveredUntil` = ese día, `perDay: null`. Con `date`, `limit`/`perDay`/`days`
+no aplican. `query.status`:
+
+| `status` | Qué significa | `slots` |
+|---|---|---|
+| `available` | hay horas libres ese día | las del día; **pasan a ser la oferta** |
+| `closed` | ese día el negocio no abre | `[]` |
+| `full` | abre, pero no queda nada libre (o ya no da el aviso mínimo) | `[]` |
+| `past` | el día ya pasó | `[]` |
+| `beyond_horizon` | todavía no se abre agenda para esa fecha (> `horizonEnd`) | `[]` |
+
+Una consulta por día **sin** horas **no borra** la oferta vigente: el cliente
+que oye «ese día no abrimos» todavía puede quedarse con lo que ya se le dio.
+Un cerebro que no recibe `query.date` igual al día pedido (un CRM anterior a
+esto ignora `date`) no debe afirmar nada de ese día.
+
+- `200` → lo de arriba.
+- `422 invalid_body` → falta `conversationId`, o `date` mal formada o
+  inexistente en el calendario (`2026-02-31`). `date=` vacía cuenta como
+  ausente.
 - `404 not_found` → conversación inexistente.
-- Clamps: `limit` 1–48 (default 12), `perDay` 1–8, `days` 1–14.
-- `{"slots":[]}` = agenda sin huecos: ofrece otra salida (handoff), no
-  reintentes.
+- Clamps: `limit` 1–48 (default 12), `perDay` 1–8 (default 3), `days` 1–14
+  (default 5); un parámetro ausente o vacío toma su default.
+- `{"slots":[]}` sin `date` = agenda sin huecos: ofrece otra salida (handoff),
+  no reintentes.
 
 ### `POST /api/bot/bookings`
 

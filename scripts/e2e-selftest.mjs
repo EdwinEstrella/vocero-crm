@@ -1905,6 +1905,8 @@ async function agendaChecks() {
     });
   }
 
+  await huecosPorFechaChecks();
+
   // El sandbox del Laboratorio (una cita de prueba jamás llega a un conector)
   // NO se verifica aquí: las conversaciones del Laboratorio no son alcanzables
   // desde la API pública —a propósito—, así que desde fuera solo podría
@@ -1912,6 +1914,138 @@ async function agendaChecks() {
   // `tests/unit/agenda-sandbox.test.ts`, que afirma lo que de verdad importa:
   // que el conector no se llama, ni al crear, ni al reprogramar, ni al
   // cancelar.
+}
+
+/* ============================================================
+ * R10 — Huecos por fecha (tests/e2e/us-agenda.md, US3b)
+ *
+ * El fallo que lo motivó, en la prueba de punta a punta raíz + Nea: a
+ * «¿tienen algo mañana en la tarde?» el cerebro solo recibía las tres
+ * primeras horas de mañana y contestó que solo había mañana. Aquí se pide el
+ * día con `date`, se reserva una hora de la TARDE y se comprueba que el
+ * reparto sin `date` conserva su forma. Corre al final de 015 con un lead
+ * propio: no toca la oferta de los demás.
+ * ============================================================ */
+async function huecosPorFechaChecks() {
+  console.log("\n== R10: huecos por fecha (la tarde de mañana) ==");
+  const tz = (await api("/api/calendar/settings")).json?.settings?.timezone;
+  const diaEn = (offsetDias) => {
+    const hoy = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    return new Date(Date.parse(`${hoy}T00:00:00Z`) + offsetDias * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+  };
+  const manana = diaEn(1);
+
+  const SUF = Date.now().toString().slice(-6);
+  await api("/api/dev/wa-mock/inbound", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: PN,
+      from: `5214629${SUF}`,
+      name: "Lead R10 tarde",
+      // Sin palabras que disparen al agente incluido a ofrecer o reservar.
+      text: "¿tienen algo mañana en la tarde?",
+      waMessageId: `wamid.e2e.r10.${SUF}.1`,
+    }),
+  });
+  let conv = null;
+  await hasta(async () => {
+    const cs = (await api("/api/conversations")).json?.conversations ?? [];
+    conv = cs.find((c) => c.contact.phone === `524629${SUF}`) ?? null;
+    return Boolean(conv);
+  });
+  ok("conversación del lead que pide la tarde", Boolean(conv));
+  if (!conv) return;
+  const q = `/api/bot/availability?conversationId=${conv.id}&limit=12&perDay=3&days=5`;
+
+  // Sin date: la forma de siempre (+ query), y el porqué del fallo a la vista.
+  const reparto = await bot(q);
+  const rSlots = reparto.json?.slots ?? [];
+  ok(
+    "sin date: la misma forma (slots + diasConAgenda) y ahora query",
+    reparto.res.status === 200 &&
+      Array.isArray(reparto.json?.diasConAgenda) &&
+      rSlots.length > 0 &&
+      ["startUtc", "endUtc", "label", "dayIso", "dayLabel", "time"].every(
+        (k) => k in rSlots[0]
+      ),
+    `status=${reparto.res.status} keys=${Object.keys(reparto.json ?? {})}`
+  );
+  ok(
+    "sin date: query dice que es un reparto y hasta dónde revisó",
+    reparto.json?.query?.date === null &&
+      reparto.json?.query?.perDay === 3 &&
+      /^\d{4}-\d{2}-\d{2}$/.test(reparto.json?.query?.coveredUntil ?? "") &&
+      /^\d{4}-\d{2}-\d{2}$/.test(reparto.json?.query?.horizonEnd ?? ""),
+    JSON.stringify(reparto.json?.query)
+  );
+
+  // Con date: TODO mañana, tarde incluida.
+  const delDia = await bot(`${q}&date=${manana}`);
+  const dSlots = delDia.json?.slots ?? [];
+  ok(
+    "con date: 200 con query.date = el día pedido y status available",
+    delDia.res.status === 200 &&
+      delDia.json?.query?.date === manana &&
+      delDia.json?.query?.status === "available",
+    `status=${delDia.res.status} query=${JSON.stringify(delDia.json?.query)}`
+  );
+  ok(
+    "con date: solo horas de ese día, más de las 3 del reparto",
+    dSlots.length > 3 && dSlots.every((s) => s.dayIso === manana),
+    `n=${dSlots.length}`
+  );
+  const tarde = dSlots.find((s) => s.time >= "15:00");
+  ok(
+    "con date: trae la TARDE (lo que el reparto no enseñaba)",
+    Boolean(tarde),
+    JSON.stringify(dSlots.map((s) => s.time))
+  );
+
+  // Consultas que no encuentran nada NO borran la oferta vigente.
+  const lejos = diaEn(8);
+  const fuera = await bot(`${q}&date=${lejos}`);
+  ok(
+    "un día más allá del horizonte → beyond_horizon, sin horas",
+    fuera.res.status === 200 &&
+      fuera.json?.query?.status === "beyond_horizon" &&
+      (fuera.json?.slots ?? []).length === 0,
+    `status=${fuera.res.status} query=${JSON.stringify(fuera.json?.query)}`
+  );
+  const mala = await bot(`${q}&date=2026-02-31`);
+  ok(
+    "una fecha inexistente → 422 invalid_body (no 500)",
+    mala.res.status === 422 && mala.json?.error?.code === "invalid_body",
+    `status=${mala.res.status}`
+  );
+
+  if (!tarde) return;
+  const reserva = await bot("/api/bot/bookings", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: conv.id, startUtc: tarde.startUtc }),
+  });
+  ok(
+    "reservar una hora de la tarde ofrecida por fecha → 201",
+    reserva.res.status === 201 && Boolean(reserva.json?.bookingId),
+    `status=${reserva.res.status} body=${JSON.stringify(reserva.json)}`
+  );
+  ok(
+    "la cita queda a la hora de la tarde elegida",
+    typeof reserva.json?.label === "string" && reserva.json.label.includes(tarde.time),
+    JSON.stringify(reserva.json?.label)
+  );
+  const otraVez = await bot(`${q}&date=${manana}`);
+  ok(
+    "la hora reservada ya no se ofrece para ese día",
+    !(otraVez.json?.slots ?? []).some((s) => s.startUtc === tarde.startUtc),
+    `n=${(otraVez.json?.slots ?? []).length}`
+  );
 }
 
 main().catch((err) => {

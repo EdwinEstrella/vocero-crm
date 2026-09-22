@@ -37,7 +37,9 @@ arranque).
 1. Ajustes → Agenda: horario L-V 09:00-18:00, cita 30 min, zona
    `America/Mexico_City`, link `https://meet.ejemplo.com/mi-sala`.
 2. `GET /api/bot/availability?conversationId=cv_…&limit=12&perDay=3&days=5` →
-   huecos repartidos entre días, etiquetas con día en palabras.
+   huecos repartidos entre días, etiquetas con día en palabras, y `query`
+   con hasta dónde se revisó. Con `&date=` (mañana) → las horas de ese día,
+   tarde incluida, con `query.status: "available"`.
 3. `POST /api/bot/bookings` con un `startUtc` ofrecido → **`201`** con
    `meetingLink` = la sala fija y `linkPending: false`.
 4. La cita aparece en "Citas"; el hueco desapareció de la disponibilidad; el
