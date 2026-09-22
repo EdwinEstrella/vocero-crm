@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Check, ChevronRight, Sparkles, UserRound } from "lucide-react";
+import { AlertTriangle, Cable, Check, ChevronRight, Sparkles, UserRound } from "lucide-react";
+import {
+  externalAnswerLabel,
+  externalAnswering,
+  externalDown,
+  type BrainStatusDto,
+} from "@/lib/brain-status";
 import type {
   AnuncioDto,
   ConversationDto,
@@ -50,26 +56,38 @@ export function ContactPanel({
   const [leadId, setLeadId] = useState<string | null>(null);
   // 018: de qué anuncio llegó; null si escribió por su cuenta.
   const [anuncio, setAnuncio] = useState<AnuncioDto | null>(null);
-  // Estado global del agente: sin esto, el toggle "Respondiendo" mentiría
-  // cuando el agente aún no se ha configurado/encendido.
-  const [agentEnabled, setAgentEnabled] = useState(false);
-  const [aiConfigured, setAiConfigured] = useState(false);
+  // Quién responde (agente incluido, cerebro externo o los dos): sin esto, el
+  // toggle "Respondiendo" mentiría cuando el agente aún no se ha
+  // configurado/encendido, y pediría la clave de IA aunque conteste Nea.
+  const [brain, setBrain] = useState<BrainStatusDto | null>(null);
 
   const contactId = conversation.contact.id;
 
-  const agentReady = aiConfigured && agentEnabled;
+  const aiConfigured = brain?.embedded.configured ?? false;
+  const agentReady = brain?.embedded.answering ?? false;
+  // Hasta donde se sabe, contesta: activo y, si hay /health, en línea.
+  const externalActive = brain ? externalAnswering(brain) : false;
   // El control es la FUENTE DE VERDAD de la conversación: el agente in-process
   // y cualquier cerebro externo conectado por /api/bot/* respetan este flag,
   // así que el toggle opera siempre — `agentReady` solo matiza el texto.
   const aiActive = conversation.aiEnabled && !conversation.handoffAt;
 
+  // Aparte del resto: consultar el /health del cerebro externo puede tardar
+  // hasta 2 s, y eso no debe demorar la etapa ni la ficha.
+  const loadBrain = useCallback(async () => {
+    const b = await fetch("/api/agent/brain-status")
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+    if (b) setBrain(b);
+  }, []);
+
   // Carga inicial (incluye notas): se re-ejecuta al cambiar de contacto.
   const refetch = useCallback(async () => {
-    const [detail, stagesRes, agentRes] = await Promise.all([
+    void loadBrain();
+    const [detail, stagesRes] = await Promise.all([
       fetch(`/api/contacts/${contactId}`).then((r) => (r.ok ? r.json() : null)),
       fetch("/api/pipeline/stages").then((r) => (r.ok ? r.json() : null)),
-      fetch("/api/agent/profile").then((r) => (r.ok ? r.json() : null)),
-    ]).catch(() => [null, null, null]);
+    ]).catch(() => [null, null]);
     if (detail) {
       setNotes(detail.contact?.notes ?? "");
       setFicha(detail.contact?.ficha ?? {});
@@ -78,18 +96,16 @@ export function ContactPanel({
       setAnuncio(detail.anuncio ?? null);
     }
     if (stagesRes) setStages(stagesRes.stages);
-    setAgentEnabled(Boolean(agentRes?.profile?.enabled));
-    setAiConfigured(Boolean(agentRes?.aiConfigured));
     setNotesLoaded(true);
-  }, [contactId]);
+  }, [contactId, loadBrain]);
 
-  // Refetch en vivo (etapa/lead + estado del agente) SIN tocar las notas, para
+  // Refetch en vivo (etapa/lead + quién responde) SIN tocar las notas, para
   // no pisar lo que el operador esté escribiendo. Lo dispara el SSE.
   const refreshLive = useCallback(async () => {
-    const [detail, agentRes] = await Promise.all([
-      fetch(`/api/contacts/${contactId}`).then((r) => (r.ok ? r.json() : null)),
-      fetch("/api/agent/profile").then((r) => (r.ok ? r.json() : null)),
-    ]).catch(() => [null, null]);
+    void loadBrain();
+    const detail = await fetch(`/api/contacts/${contactId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
     if (detail) {
       // La ficha SÍ se refresca en vivo: el agente la va llenando mientras la
       // conversación ocurre, y verla aparecer sola es justo para lo que sirve.
@@ -101,11 +117,7 @@ export function ContactPanel({
       // refetch en vivo es lo que la hace aparecer sin recargar.
       setAnuncio(detail.anuncio ?? null);
     }
-    if (agentRes) {
-      setAgentEnabled(Boolean(agentRes.profile?.enabled));
-      setAiConfigured(Boolean(agentRes.aiConfigured));
-    }
-  }, [contactId]);
+  }, [contactId, loadBrain]);
 
   useEffect(() => {
     setNotesLoaded(false);
@@ -223,7 +235,7 @@ export function ContactPanel({
                     ? "En pausa · atención humana"
                     : !conversation.aiEnabled
                       ? "En pausa"
-                      : agentReady
+                      : agentReady || externalActive
                         ? "Respondiendo"
                         : "Activada"}
                 </p>
@@ -240,7 +252,48 @@ export function ContactPanel({
               />
             </div>
 
-            {!agentReady && (
+            {brain?.warning === "doble_respuesta" ? (
+              <div className="mt-2.5 flex items-start gap-2 rounded-md border border-danger-soft bg-danger-tint p-2.5">
+                <AlertTriangle
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger-text"
+                  strokeWidth={1.7}
+                />
+                <div className="text-[11px] leading-relaxed text-danger-text">
+                  <p>
+                    <span className="font-semibold">Doble respuesta:</span> el agente
+                    incluido y tu cerebro externo contestan a la vez.
+                  </p>
+                  <Link
+                    href="/agent"
+                    className="mt-1 inline-block font-medium underline underline-offset-2"
+                  >
+                    Revisar en Agente →
+                  </Link>
+                </div>
+              </div>
+            ) : brain && !agentReady && externalActive ? (
+              <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-3">
+                <Cable className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />
+                {externalAnswerLabel(brain)}
+              </p>
+            ) : brain && !agentReady && externalDown(brain) ? (
+              <div className="mt-2.5 flex items-start gap-2 rounded-md border border-warning-soft bg-warning-tint p-2.5">
+                <Cable
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning-text"
+                  strokeWidth={1.7}
+                />
+                <p className="text-[11px] leading-relaxed text-warning-text">
+                  Tu cerebro externo no está en línea: nadie contesta en automático
+                  hasta que vuelva.
+                  <Link
+                    href="/agent"
+                    className="ml-1 whitespace-nowrap font-medium text-brand-text underline underline-offset-2 hover:text-brand"
+                  >
+                    Ver en Agente →
+                  </Link>
+                </p>
+              </div>
+            ) : brain && !agentReady && (
               <div className="mt-2.5 flex items-start gap-2 rounded-md border border-warning-soft bg-warning-tint p-2.5">
                 <Sparkles
                   className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning-text"
