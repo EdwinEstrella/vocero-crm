@@ -228,4 +228,10 @@ describe("sin date: la misma forma de siempre, más query", () => {
     });
     expect(ofertaRegistrada()).toHaveLength(12);
   });
+
+  it("sin limit/perDay/days aplica los defaults del contrato (12/3/5), no 1", async () => {
+    const { json } = await pedir("conversationId=cv_1");
+    expect(json!.slots as Slot[]).toHaveLength(12);
+    expect(json!.query).toMatchObject({ perDay: 3, coveredUntil: "2026-09-24" });
+  });
 });

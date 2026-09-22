@@ -42,6 +42,9 @@ const LIMITS = {
 };
 
 function clamp(raw: string | null, l: { min: number; max: number; def: number }) {
+  // Ausente o vacío ⇒ el default del contrato. `Number(null)` es 0, no NaN:
+  // sin este corte, pedir sin parámetros daba UN hueco de UN día.
+  if (raw === null || raw.trim() === "") return l.def;
   const n = Number(raw);
   if (!Number.isFinite(n)) return l.def;
   return Math.max(l.min, Math.min(l.max, Math.round(n)));
