@@ -116,6 +116,8 @@ async function main() {
   );
   await api("/api/dev/wa-mock/outbox", { method: "DELETE" });
 
+  await overrideChecks();
+
   console.log("\n== us-bsuid: inbound sin wa_id ==");
   const inb1 = await api("/api/dev/wa-mock/inbound", {
     method: "POST",
@@ -1080,6 +1082,86 @@ async function main() {
 
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
+}
+
+/* ============================================================
+ * us5 — Guardar la conexión respeta el override de un cerebro externo
+ * (tests/e2e/us5-connect.md, paso 7)
+ *
+ * En Meta, `POST {WABA}/subscribed_apps` SIN cuerpo es la forma documentada
+ * de BORRAR el override de callback de la WABA, y el CRM lo mandaba en cada
+ * "Guardar": un cerebro externo (Nea) que recibe los webhooks por ese override
+ * quedaba sordo sin que nada lo avisara. El wa-mock se comporta como Meta, así
+ * que si el CRM vuelve a re-suscribir a ciegas, esto se pone rojo.
+ * ============================================================ */
+
+async function overrideChecks() {
+  console.log("\n== us5: guardar la conexión no desconecta a un cerebro externo ==");
+  const WABA = "WABA-E2E";
+  const NEA = "https://nea.e2e.test/api/webhooks/meta";
+  const graph = `/api/dev/wa-mock/graph/v25.0/${WABA}/subscribed_apps`;
+  const comoMeta = { authorization: "Bearer tok-e2e" };
+
+  const suscripcion = async () =>
+    (await api(graph, { headers: comoMeta })).json?.data ?? [];
+  const overrideActual = async () =>
+    (await suscripcion()).find((app) => app.override_callback_uri)
+      ?.override_callback_uri ?? null;
+  const guardar = (token) =>
+    api("/api/settings/whatsapp", {
+      method: "PUT",
+      body: JSON.stringify({ wabaId: WABA, phoneNumberId: PN, token }),
+    });
+
+  // Modo directo: sin override, guardar suscribe la app, como siempre.
+  let guardado = await guardar("tok-e2e");
+  const trasGuardar = await suscripcion();
+  ok(
+    "sin override, guardar la conexión suscribe la app a la WABA",
+    guardado.res.ok &&
+      trasGuardar.length === 1 &&
+      !trasGuardar[0]?.override_callback_uri,
+    JSON.stringify({ status: guardado.res.status, trasGuardar })
+  );
+
+  // El cerebro externo fija SU override contra Meta (lo que hace Nea).
+  const fijado = await api(graph, {
+    method: "POST",
+    headers: comoMeta,
+    body: JSON.stringify({
+      override_callback_uri: NEA,
+      verify_token: "verify-e2e",
+    }),
+  });
+  ok(
+    "el cerebro externo fija su override en la WABA",
+    fijado.res.ok && (await overrideActual()) === NEA
+  );
+
+  // Rotar el token y guardar otra vez — el caso que lo desconectaba.
+  guardado = await guardar("tok-e2e-rotado");
+  ok(
+    "guardar la conexión con el token rotado responde 200",
+    guardado.res.ok,
+    JSON.stringify(guardado.json)
+  );
+  const despues = await overrideActual();
+  ok(
+    "y el override del cerebro externo SIGUE en la WABA",
+    despues === NEA,
+    `override=${despues}`
+  );
+
+  // Control del propio mock: un POST sin cuerpo SÍ borra el override, como en
+  // Meta. Sin esto, el check anterior podría pasar contra un mock permisivo.
+  await api(graph, { method: "POST", headers: comoMeta });
+  ok(
+    "control: un POST sin cuerpo borra el override (así se comporta Meta)",
+    (await overrideActual()) === null
+  );
+
+  // El resto del guion sigue con la conexión de siempre.
+  await guardar("tok-e2e");
 }
 
 /* ============================================================

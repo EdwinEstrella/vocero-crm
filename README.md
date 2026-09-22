@@ -97,6 +97,11 @@ Los 409 vienen tipados (`ai_paused`, `window_closed`, `sandbox_violation`) para
 que tu bot sepa si callarse, mandar plantilla o rendirse. El guion de pruebas
 está en [`tests/e2e/us-bot-api.md`](tests/e2e/us-bot-api.md).
 
+Si tu bot recibe los webhooks de Meta por un **override de callback de la
+WABA**, guardar la conexión en Configuración → WhatsApp (o rotar el token) lo
+respeta: Vocero ve el override en `GET /{WABA}/subscribed_apps` y no re-suscribe
+la app, que es justo lo que lo borraría.
+
 Agente de referencia: [nea-agent](https://github.com/kevinrivm/nea-agent), MIT.
 
 ### 📅 Agenda con huecos reales (opcional, apagada por defecto)
@@ -259,7 +264,8 @@ del cliente se conecta con el **override de callback por WABA**:
 
    La URL y el verify token exactos están en **Configuración → WhatsApp** de la
    instancia. Meta hace el handshake en ese momento (la URI debe responder, si
-   no devuelve 422).
+   no devuelve 422). Volver a guardar la conexión después (p. ej. al rotar el
+   token) respeta este override: Vocero no re-suscribe una WABA que ya lo tiene.
 5. **Registra el número** en la Cloud API si aún no lo está
    (`POST /{PHONE_NUMBER_ID}/register`) y manda un mensaje de prueba al número:
    debe aparecer en la bandeja en uno o dos segundos. Los mensajes del cliente
@@ -398,6 +404,13 @@ base64 (44 caracteres): `openssl rand -base64 32`.
 
 **La app arranca pero /api/health falla** — La base de datos no está lista o
 `DATABASE_URL` apunta mal; revisa los logs (`docker compose logs app`).
+
+**Subir el logo o el icono da error, o los adjuntos no se ven** — La app no
+puede escribir en `MEDIA_DIR` (`/data/media` en la imagen), y el log de
+arranque lo dice (`[boot] MEDIA_DIR … no es escribible`). Monta un volumen en
+`/data` (el compose ya lo hace; en Coolify, un persistent storage) y no definas
+`MEDIA_DIR` en la plataforma: el contenedor le da el volumen al usuario de la
+app al arrancar.
 
 **Olvidé mi contraseña y no puedo entrar** — Vocero no manda correos (sería una
 dependencia externa) y el registro público se cierra con la primera

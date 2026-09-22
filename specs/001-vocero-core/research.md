@@ -69,6 +69,10 @@ Authorization: Bearer {token con whatsapp_business_management}
   pestaña de plantillas. Documentar honestamente en README (modo agencia).
 - Tras conectar en modo directo también se ejecuta `POST {WABA_ID}/subscribed_apps`
   (sin override) best-effort — necesario para que la app reciba webhooks de esa WABA.
+  **Solo si la WABA no tiene ya un override**: antes se consulta
+  `GET {WABA_ID}/subscribed_apps` y, si alguna app trae `override_callback_uri`,
+  no se re-suscribe (ese POST sin campos lo borraría y desconectaría al backend
+  de la agencia o al cerebro externo). Si la consulta falla, se suscribe igual.
 
 ## DV-VC-05 — Cifrado de credenciales: AES-256-GCM
 

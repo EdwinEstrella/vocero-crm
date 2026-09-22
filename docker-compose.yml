@@ -20,6 +20,10 @@ services:
       OPENROUTER_JUDGE_MODEL: ${OPENROUTER_JUDGE_MODEL:-}
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-}
       AGENT_COALESCE_MS: ${AGENT_COALESCE_MS:-6000}
+    volumes:
+      # Adjuntos, logo e icono (la imagen ya trae MEDIA_DIR=/data/media): sin
+      # este volumen se pierden al recrear el contenedor.
+      - vocero_app_data:/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,5 +66,6 @@ services:
 
 volumes:
   vocero_pg:
+  vocero_app_data:
   vocero_caddy_data:
   vocero_caddy_config:

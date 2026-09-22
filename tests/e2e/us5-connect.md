@@ -14,7 +14,8 @@
    prueba.
 3. Guardar.
    ✅ Estado "Conectado" con display number y token …last4; el token quedó
-   cifrado en BD (unit test) y se llamó subscribed_apps (best-effort).
+   cifrado en BD (unit test) y, como la WABA no tenía override, se suscribió
+   la app con subscribed_apps (best-effort).
 4. Sección Webhook:
    ✅ URL COMPLETA con el verify token como segmento + botón copiar; aviso
    informativo (no error) si META_APP_SECRET no está configurado; nota de
@@ -27,3 +28,9 @@
    intacta).
 6. Webhook GET handshake con verify token correcto → challenge; segmento
    incorrecto → 404 (cubierto también en guion US1).
+7. La WABA ya enruta a un override (cerebro externo como Nea, o el backend de
+   una agencia) → rotar el token y Guardar.
+   ✅ Guarda igual, y el override SIGUE en `GET {WABA}/subscribed_apps`: el CRM
+   lo consulta antes y no re-suscribe, porque en Meta un POST sin cuerpo borra
+   el override. Automatizado en `scripts/e2e-selftest.mjs` (sección "us5"),
+   con un control de que el wa-mock sí lo borra ante ese POST.

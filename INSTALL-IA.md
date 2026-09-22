@@ -48,7 +48,8 @@
 | `OPENROUTER_API_TOKEN` | del usuario (si lo dio) |
 | `OPENROUTER_MODEL` | si hay token: sugiere `anthropic/claude-sonnet-4.5` u otro a elección |
 
-`DOMAIN` solo aplica en la Ruta B (para Caddy).
+`DOMAIN` solo aplica en la Ruta B (para Caddy). `MEDIA_DIR` no va en la tabla
+a propósito: la imagen ya la trae (`/data/media`, dentro del volumen de `/data`).
 
 ## Ruta A — Coolify (con el MCP de Coolify)
 
@@ -59,13 +60,21 @@
    `https://github.com/kevinrivm/vocero-crm` (rama `main`, build pack
    `dockerfile`, puerto expuesto `3000`) — no requiere GitHub App ni deploy
    keys. Asigna el dominio del usuario con HTTPS.
-3. **Variables**: configura las variables de la tabla en la app (runtime, no
+3. **Almacenamiento persistente**: agrega a la app un volumen montado en
+   **`/data`** (MCP: `storages` con `resource: application`, `action: create`,
+   `type: persistent`, `name: vocero-data`, `mount_path: /data`). Ahí viven
+   los adjuntos, el logo y el icono; la imagen ya trae `MEDIA_DIR=/data/media`,
+   así que **no definas `MEDIA_DIR`**. Que Coolify monte el volumen como root
+   no importa: el contenedor arranca como root solo para dárselo al usuario de
+   la app y luego baja de privilegios. Sin este volumen la app funciona, pero
+   esos archivos se pierden en cada redeploy.
+4. **Variables**: configura las variables de la tabla en la app (runtime, no
    build). `DATABASE_URL` apunta al host interno del paso 1.
-4. **Sin Pre-Deployment Command**: las migraciones corren solas al arrancar el
+5. **Sin Pre-Deployment Command**: las migraciones corren solas al arrancar el
    contenedor (`node migrate.mjs && node server.js`).
-5. **Despliega** y espera el healthcheck verde (`/api/health`; el start-period
+6. **Despliega** y espera el healthcheck verde (`/api/health`; el start-period
    cubre las migraciones).
-6. **Verifica**: `https://<dominio>/api/health` responde `{"ok":true}` y
+7. **Verifica**: `https://<dominio>/api/health` responde `{"ok":true}` y
    `https://<dominio>/login` carga.
 
 ## Ruta B — docker compose (VPS con Docker)
@@ -78,6 +87,8 @@ docker compose up -d --build
 ```
 
 - Caddy emite el certificado HTTPS automáticamente con `DOMAIN`.
+- El compose ya monta el volumen `vocero_app_data` en `/data` (adjuntos, logo
+  e icono): no hay que definir `MEDIA_DIR`.
 - Verifica: `docker compose ps` (tres servicios healthy) y
   `https://<dominio>/api/health` → `{"ok":true}`.
 
@@ -101,3 +112,10 @@ docker compose up -d --build
 - `ENCRYPTION_KEY` inválida → debe ser EXACTAMENTE 32 bytes en base64
   (44 caracteres): regénérala con `openssl rand -base64 32`.
 - Webhook "no verificado" en Meta → el dominio aún no resuelve o no es https.
+- Subir el logo o el icono da error, o los adjuntos salen "no disponibles" →
+  busca `[boot] MEDIA_DIR` o `[entrypoint] AVISO` en los logs: el directorio
+  no es escribible (p. ej. el contenedor corre con un `--user` forzado sobre un
+  volumen de root, o alguien definió `MEDIA_DIR` a mano). Quita `MEDIA_DIR` de
+  las variables, deja el volumen en `/data` y redespliega.
+- Adjuntos, logo o icono desaparecen tras un redeploy → falta el volumen de
+  `/data` (paso 3 de la Ruta A).
