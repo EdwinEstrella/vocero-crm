@@ -37,6 +37,12 @@ services:
       OPENROUTER_JUDGE_MODEL: ${OPENROUTER_JUDGE_MODEL:-}
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-}
       AGENT_COALESCE_MS: ${AGENT_COALESCE_MS:-6000}
+      # Opcionales: vacías = apagadas (guía de cada una en .env.example).
+      CHANNELS: ${CHANNELS:-}
+      AGENDA: ${AGENDA:-}
+      ATRIBUCION: ${ATRIBUCION:-}
+      BOT_API_KEY: ${BOT_API_KEY:-}
+      BRAIN_HEALTH_URL: ${BRAIN_HEALTH_URL:-}
     volumes:
       # Adjuntos, logo e icono (la imagen ya trae MEDIA_DIR=/data/media): sin
       # este volumen se pierden al recrear el contenedor.
