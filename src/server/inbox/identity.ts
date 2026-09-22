@@ -74,6 +74,89 @@ export function resolveIdentity(
 }
 
 /**
+ * El contacto de WhatsApp al que la ingesta asignaría esta identidad, SIN
+ * crearlo: por `wa_identity`, por BSUID (en `wa_user_id` o como identidad
+ * `bsuid:`) o por teléfono. Es LA regla de reconciliación: la usan la ingesta
+ * y el cerebro externo, para que los dos hablen del mismo humano.
+ */
+export async function findWhatsappContact(
+  organizationId: string,
+  resolved: ResolvedIdentity
+) {
+  const matchers = [eq(schema.contact.waIdentity, resolved.identity)];
+  if (resolved.waUserId) {
+    matchers.push(eq(schema.contact.waUserId, resolved.waUserId));
+    matchers.push(
+      eq(schema.contact.waIdentity, `${BSUID_PREFIX}${resolved.waUserId}`)
+    );
+  }
+  if (resolved.phone) {
+    matchers.push(eq(schema.contact.phone, resolved.phone));
+  }
+
+  const rows = await getDb()
+    .select()
+    .from(schema.contact)
+    .where(
+      and(
+        eq(schema.contact.organizationId, organizationId),
+        eq(schema.contact.channel, "whatsapp"),
+        or(...matchers)
+      )
+    )
+    .orderBy(schema.contact.createdAt)
+    .limit(1);
+  return rows[0];
+}
+
+/**
+ * La identidad que manda un cerebro externo, leída como la lee la ingesta:
+ * `bsuid:<id>` es un BSUID y lo demás, un teléfono (normalizado igual que
+ * `from`). Las de otros canales (`ig:`, `fb:`) no se reconcilian: null.
+ */
+export function parseIdentity(identity: string): ResolvedIdentity | null {
+  if (identity.startsWith(IG_PREFIX) || identity.startsWith(FB_PREFIX)) {
+    return null;
+  }
+  if (identity.startsWith(BSUID_PREFIX)) {
+    const waUserId = identity.slice(BSUID_PREFIX.length);
+    if (!waUserId) return null;
+    return { identity, phone: null, waUserId, profileName: null };
+  }
+  const phone = normalizeMx(identity);
+  return { identity: phone, phone, waUserId: null, profileName: null };
+}
+
+/**
+ * El contacto de una identidad para `/api/bot/*`. Primero la llave exacta (de
+ * cualquier canal); si no existe, la reconciliación de la ingesta.
+ *
+ * El caso que la motiva: Meta migra a BSUID. Quien escribió primero CON
+ * teléfono tiene `wa_identity` = teléfono (estable de por vida) y su BSUID en
+ * `wa_user_id`; cuando después llega solo con BSUID, la ingesta lo reconcilia
+ * a ese contacto, pero el cerebro pregunta por `bsuid:<id>` y recibía 404: el
+ * cliente se quedaba sin respuesta.
+ */
+export async function findContactByIdentity(
+  organizationId: string,
+  identity: string
+) {
+  const rows = await getDb()
+    .select()
+    .from(schema.contact)
+    .where(
+      and(
+        eq(schema.contact.organizationId, organizationId),
+        eq(schema.contact.waIdentity, identity)
+      )
+    )
+    .limit(1);
+  if (rows[0]) return rows[0];
+  const resolved = parseIdentity(identity);
+  return resolved ? findWhatsappContact(organizationId, resolved) : undefined;
+}
+
+/**
  * Resuelve o crea el contacto para una identidad, reconciliando:
  * - Si llegan teléfono Y BSUID, encuentra al contacto por cualquiera de los
  *   dos y adquiere la señal que le faltaba (el `wa_identity` NO cambia:
@@ -152,31 +235,7 @@ export async function getOrCreateContactByIdentity(
     return { contact: contactIg, isNew: false };
   }
 
-  const matchers = [eq(schema.contact.waIdentity, resolved.identity)];
-  if (resolved.waUserId) {
-    matchers.push(eq(schema.contact.waUserId, resolved.waUserId));
-    matchers.push(
-      eq(schema.contact.waIdentity, `${BSUID_PREFIX}${resolved.waUserId}`)
-    );
-  }
-  if (resolved.phone) {
-    matchers.push(eq(schema.contact.phone, resolved.phone));
-  }
-
-  const rows = await db
-    .select()
-    .from(schema.contact)
-    .where(
-      and(
-        eq(schema.contact.organizationId, organizationId),
-        eq(schema.contact.channel, "whatsapp"),
-        or(...matchers)
-      )
-    )
-    .orderBy(schema.contact.createdAt)
-    .limit(1);
-
-  const existing = rows[0];
+  const existing = await findWhatsappContact(organizationId, resolved);
   if (existing) {
     const patch: Partial<typeof schema.contact.$inferInsert> = {};
     if (resolved.waUserId && !existing.waUserId)

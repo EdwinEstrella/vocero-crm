@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { requireBotKey } from "@/server/bot/auth";
+import { BOT_API_BUDGET, BOT_AUTH_FAILURES, requireBotKey } from "@/server/bot/auth";
 import { mergeFicha, normalizeFicha } from "@/server/bot/ficha";
 import { toHandoffReason } from "@/server/bot/handoff";
 import { resetRateLimit } from "@/lib/rate-limit";
@@ -47,6 +47,60 @@ describe("requireBotKey", () => {
   it("longitudes distintas no filtran información (401 uniforme)", () => {
     const res = requireBotKey(reqWith("x"));
     expect(res?.status).toBe(401);
+  });
+});
+
+/**
+ * R11 — El límite ya no es un DoS de regalo. Antes: un cubo global contado
+ * ANTES de autenticar, así que 600 requests anónimos por minuto dejaban al
+ * cerebro en 429 y a los clientes sin respuesta.
+ */
+describe("requireBotKey: límites (autentica primero, cuenta después)", () => {
+  const MALA = "clave-equivocada-del-mismo-largo-0000000";
+
+  function desde(ip: string, key?: string): Request {
+    return new Request("http://localhost/api/bot/context", {
+      headers: {
+        // Primer salto = el cliente; el resto lo agregan los proxies.
+        "x-forwarded-for": `${ip}, 10.0.0.2`,
+        ...(key ? { "x-api-key": key } : {}),
+      },
+    });
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("BOT_API_KEY", KEY);
+    resetRateLimit();
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("700 requests sin key desde una IP → el cerebro sigue en 200", () => {
+    const vistos = { 401: 0, 429: 0 };
+    for (let i = 0; i < 700; i++) {
+      const s = requireBotKey(desde("203.0.113.9", i % 2 ? MALA : undefined))?.status;
+      if (s === 401 || s === 429) vistos[s]++;
+    }
+    expect(vistos).toEqual({ 401: BOT_AUTH_FAILURES.max, 429: 700 - BOT_AUTH_FAILURES.max });
+    expect(requireBotKey(desde("198.51.100.7", KEY))).toBeNull();
+    // Ni aunque comparta IP con quien inunda (mismo proxy, o "local").
+    expect(requireBotKey(desde("203.0.113.9", KEY))).toBeNull();
+  });
+
+  it("las fallidas se frenan POR IP: 30 → 401, la 31 → 429; otra IP sigue en 401", () => {
+    for (let i = 0; i < BOT_AUTH_FAILURES.max; i++) {
+      expect(requireBotKey(desde("203.0.113.9", MALA))?.status).toBe(401);
+    }
+    expect(requireBotKey(desde("203.0.113.9", MALA))?.status).toBe(429);
+    expect(requireBotKey(desde("192.0.2.1", MALA))?.status).toBe(401);
+  });
+
+  it("el presupuesto del cerebro autenticado sigue aplicando", () => {
+    for (let i = 0; i < BOT_API_BUDGET.max; i++) {
+      expect(requireBotKey(desde("198.51.100.7", KEY))).toBeNull();
+    }
+    expect(requireBotKey(desde("198.51.100.7", KEY))?.status).toBe(429);
+    // Y los fallidos no se cuentan contra él: su respuesta sigue siendo 401.
+    expect(requireBotKey(desde("192.0.2.1"))?.status).toBe(401);
   });
 });
 

@@ -1227,6 +1227,7 @@ async function main() {
   await agendaChecks();
   await atribucionChecks();
   await anuncioDeOrigenChecks();
+  await r11BotChecks();
 
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
@@ -2689,4 +2690,171 @@ async function anuncioDeOrigenChecks() {
   );
   const reparada = convFalla ? await imagenDe(convFalla.contact.id, 16000) : null;
   ok("y abrir el contacto la repara en segundo plano", !!reparada, "la imagen no se reparó");
+}
+
+/* ============================================================
+ * R11 — Robustez de la API del bot (sección autocontenida)
+ *
+ * Cada parte dice qué rompía antes. Todo lleva un sufijo por corrida:
+ * re-correr contra la misma base (o dentro de la ventana del limitador) no
+ * puede medir lo de la corrida anterior.
+ * ============================================================ */
+async function r11BotChecks() {
+  const RUN = Date.now().toString().slice(-6);
+
+  /*
+   * 1. Una inundación sin key desde UNA IP no le quita el turno al cerebro.
+   *    Antes: un cubo global contado ANTES de autenticar → 429 para Nea el
+   *    resto de la ventana, y clientes sin respuesta.
+   */
+  console.log("\n== R11: 700 requests sin key desde una IP vs. el cerebro ==");
+  const deReferencia = ((await api("/api/conversations")).json?.conversations ?? [])[0];
+  ok("hay una conversación para que el cerebro pregunte", Boolean(deReferencia));
+  // Una IP por corrida: la de la corrida anterior puede seguir frenada.
+  const IP = `10.${Number(RUN.slice(0, 2))}.${Number(RUN.slice(2, 4))}.${Number(RUN.slice(4, 6))}`;
+  const intento = (key, ip = IP) =>
+    fetch(`${BASE}/api/bot/context?conversationId=${deReferencia?.id}`, {
+      headers: { "x-forwarded-for": ip, ...(key ? { "x-api-key": key } : {}) },
+    }).then((r) => r.status);
+  const vistos = {};
+  const cerebroDurante = [];
+  for (let lote = 0; lote < 14; lote++) {
+    const fallidos = Array.from({ length: 50 }, (_, i) =>
+      intento(i % 2 ? "clave-equivocada-0123456789" : undefined)
+    );
+    // El cerebro pregunta EN MEDIO de la inundación, desde otra IP y desde
+    // la misma (mismo proxy, o sin proxy donde todo es "local").
+    const cerebro = lote === 7 ? [intento(BOT_KEY, "10.255.0.1"), intento(BOT_KEY)] : [];
+    const [estados, deCerebro] = await Promise.all([
+      Promise.all(fallidos),
+      Promise.all(cerebro),
+    ]);
+    for (const s of estados) vistos[s] = (vistos[s] ?? 0) + 1;
+    cerebroDurante.push(...deCerebro);
+  }
+  ok(
+    "la inundación: 30 → 401 y las otras 670 → 429 (frenada por IP)",
+    vistos[401] === 30 && vistos[429] === 670,
+    JSON.stringify(vistos)
+  );
+  ok(
+    "el cerebro DURANTE la inundación → 200 (otra IP y la misma)",
+    cerebroDurante.length === 2 && cerebroDurante.every((s) => s === 200),
+    JSON.stringify(cerebroDurante)
+  );
+  const despues = [await intento(BOT_KEY, "10.255.0.1"), await intento(BOT_KEY)];
+  ok(
+    "el cerebro DESPUÉS de la inundación → 200",
+    despues.every((s) => s === 200),
+    JSON.stringify(despues)
+  );
+  const otraIp = await intento(undefined, `10.254.${Number(RUN.slice(2, 4))}.${Number(RUN.slice(4, 6))}`);
+  ok("otra IP sin key sigue en 401 (el freno es por IP, no global)", otraIp === 401, `status=${otraIp}`);
+
+  /*
+   * 2. Quien escribió primero CON teléfono y luego llega solo con BSUID: el
+   *    contexto por `bsuid:<id>` es su contacto. Antes: 404, y el cerebro
+   *    no podía contestarle.
+   */
+  console.log("\n== R11: contexto por BSUID de quien escribió con teléfono ==");
+  const inbound = (body) =>
+    api("/api/dev/wa-mock/inbound", {
+      method: "POST",
+      body: JSON.stringify({ phoneNumberId: PN, ...body }),
+    });
+  const convDe = async (canonico) =>
+    ((await api("/api/conversations")).json?.conversations ?? []).find(
+      (c) => c.contact.phone === canonico
+    );
+  const mensajesDe = async (id) =>
+    (await api(`/api/conversations/${id}/messages`)).json?.messages ?? [];
+  const CANON = `524629${RUN}`;
+  const BSU = `MX.r11.${RUN}`;
+  const NOMBRE = `R11 BSUID ${RUN}`;
+  await inbound({
+    from: `5214629${RUN}`,
+    fromUserId: BSU,
+    name: NOMBRE,
+    text: "hola, les escribo con mi número",
+    waMessageId: `wamid.e2e.r11.tel.${RUN}`,
+  });
+  await hasta(async () => Boolean(await convDe(CANON)));
+  const conv = await convDe(CANON);
+  ok("el contacto nace con el teléfono como identidad", Boolean(conv));
+
+  // Meta ya no manda el teléfono: solo el BSUID.
+  await inbound({
+    fromUserId: BSU,
+    name: NOMBRE,
+    text: "y ahora sin número",
+    waMessageId: `wamid.e2e.r11.bsu.${RUN}`,
+  });
+  const reconciliado = await hasta(async () =>
+    conv ? (await mensajesDe(conv.id)).some((m) => m.text === "y ahora sin número") : false
+  );
+  ok("la ingesta reconcilia el mensaje solo-BSUID a la MISMA conversación", reconciliado);
+
+  const bsuid = encodeURIComponent(`bsuid:${BSU}`);
+  const porBsuid = await bot(`/api/bot/context?waIdentity=${bsuid}`);
+  ok(
+    "GET /api/bot/context?waIdentity=bsuid:<id> → 200 (antes 404)",
+    porBsuid.res.status === 200,
+    `status=${porBsuid.res.status}`
+  );
+  ok(
+    "…y es el MISMO contacto y conversación (su identidad sigue siendo el teléfono)",
+    porBsuid.json?.conversation?.id === conv?.id &&
+      porBsuid.json?.contact?.waIdentity === CANON,
+    JSON.stringify({ conv: porBsuid.json?.conversation?.id, contact: porBsuid.json?.contact })
+  );
+  const neutro = await bot(`/api/bot/context?identity=${bsuid}`);
+  ok(
+    "el nombre neutro `identity` resuelve igual",
+    neutro.json?.conversation?.id === conv?.id,
+    `status=${neutro.res.status}`
+  );
+  const nadie = await bot(
+    `/api/bot/context?waIdentity=${encodeURIComponent(`bsuid:MX.r11.nadie.${RUN}`)}`
+  );
+  ok("un BSUID que nadie tiene sigue en 404", nadie.res.status === 404, `status=${nadie.res.status}`);
+
+  /*
+   * 3. Pedir cita con la agenda apagada no termina en "Error del proveedor
+   *    de IA": el ai-mock ya no ofrece horarios que el prompt no le enseñó
+   *    (el esquema del turno los rechazaba y el agente traspasaba).
+   */
+  const agenda = /^(on|1|true|si|sí|yes)$/i.test((process.env.AGENDA ?? "").trim());
+  console.log(`\n== R11: pedir cita con la agenda ${agenda ? "encendida" : "apagada"} ==`);
+  await api("/api/agent/profile", { method: "PUT", body: JSON.stringify({ enabled: true }) });
+  const CANON_CITA = `524630${RUN}`;
+  await inbound({
+    from: `5214630${RUN}`,
+    name: `R11 Cita ${RUN}`,
+    text: "hola, ¿dan citas el sábado?",
+    waMessageId: `wamid.e2e.r11.cita.${RUN}`,
+  });
+  const salientesCita = async () => {
+    const c = await convDe(CANON_CITA);
+    return c ? (await mensajesDe(c.id)).filter((m) => m.direction === "out") : [];
+  };
+  await hasta(
+    async () =>
+      Boolean((await convDe(CANON_CITA))?.handoffAt) || (await salientesCita()).length > 0,
+    25000
+  );
+  const convCita = await convDe(CANON_CITA);
+  const salientes = await salientesCita();
+  ok(
+    "el agente contesta y NO traspasa por «Error del proveedor de IA»",
+    !convCita?.handoffAt && salientes.some((m) => m.origin === "ai"),
+    JSON.stringify({ reason: convCita?.handoffReason, salientes: salientes.map((m) => m.text) })
+  );
+  if (!agenda) {
+    ok(
+      "con la agenda apagada no ofrece horarios",
+      !salientes.some((m) => /horario/i.test(m.text ?? "")),
+      JSON.stringify(salientes.map((m) => m.text))
+    );
+  }
+  await api("/api/agent/profile", { method: "PUT", body: JSON.stringify({ enabled: false }) });
 }

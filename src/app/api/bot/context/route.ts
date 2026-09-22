@@ -3,6 +3,7 @@ import { getDb, schema } from "@/lib/db";
 import { apiError } from "@/lib/api";
 import { requireBotKey, resolveInstanceOrg } from "@/server/bot/auth";
 import { serializeFicha } from "@/server/bot/ficha";
+import { findContactByIdentity } from "@/server/inbox/identity";
 import { isWindowOpen, windowRemainingMs } from "@/server/inbox/window";
 import { citasParaContexto } from "@/server/agenda/context";
 
@@ -62,17 +63,9 @@ export async function GET(req: Request) {
     contact = rows[0]?.contact;
     conversation = rows[0]?.conversation;
   } else if (waIdentity) {
-    const contacts = await db
-      .select()
-      .from(schema.contact)
-      .where(
-        and(
-          eq(schema.contact.organizationId, organizationId),
-          eq(schema.contact.waIdentity, waIdentity)
-        )
-      )
-      .limit(1);
-    contact = contacts[0];
+    // Exacta primero; si no, la reconciliación de la ingesta (R11): quien
+    // escribió con teléfono y ahora llega solo con BSUID es el mismo contacto.
+    contact = await findContactByIdentity(organizationId, waIdentity);
     if (contact) {
       // La conversación del Laboratorio jamás se resuelve por identidad: ese
       // camino es para el bot de producción, que nunca debe hablarle a un

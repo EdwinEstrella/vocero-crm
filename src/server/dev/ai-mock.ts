@@ -61,8 +61,17 @@ export function aiMockCompletion(messages: InMessage[]): string {
     .filter((m) => m.role === "system" && m.content.includes(CABECERA_HUECOS))
     .flatMap((m) => m.content.match(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g) ?? []);
 
+  /**
+   * Solo ofrece horarios si el prompt le ENSEÑÓ `offer_slots`, como un modelo
+   * real. Con la agenda apagada el prompt no la trae (ni el esquema del turno
+   * la acepta), y el mock la contestaba igual: la conversación acababa en
+   * "Error del proveedor de IA", algo que en producción no pasa (R11).
+   */
+  const agendaEnseñada = messages.some(
+    (m) => m.role === "system" && m.content.includes('"action":"offer_slots"')
+  );
   const quiereCita = /cita|agendar|agenda|horario|reserv/.test(text);
-  if (quiereCita && huecos.length === 0) {
+  if (agendaEnseñada && quiereCita && huecos.length === 0) {
     return JSON.stringify({
       action: "offer_slots",
       reply: "Claro, tengo estos horarios:",
