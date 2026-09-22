@@ -59,10 +59,9 @@ reconectar. Respalda la base antes, como en cualquier actualización.
 - **Variables.** Ninguna obligatoria nueva.
   - `BRAIN_HEALTH_URL` (opcional): el `/health` de tu cerebro externo, p. ej.
     `http://nea:8000/health`, para la tarjeta «Quién responde a tus
-    clientes». Tiene que ser una URL `http://` o `https://` completa. Con
-    cualquier otro valor el entorno no valida y la app entera deja de
-    funcionar, no solo la tarjeta: `/api/health` responde 503 y el log de
-    arranque nombra la variable. Vacía cuenta como no definida.
+    clientes». Tiene que ser una URL `http://` o `https://` completa; si no
+    lo es, la tarjeta lo marca como problema de configuración y el resto de
+    la app sigue funcionando ([#74]). Vacía cuenta como no definida.
   - `SOURCE_COMMIT` escrito a mano en la plataforma: si el build no trae su
     propio commit, la barra lo marca «commit sin verificar» y `/api/health`
     responde `"commitVerified":false`. Quítalo, o pásalo como build arg en
@@ -210,3 +209,4 @@ Sin entrada aquí: lo anterior está en el tag
 [#71]: https://github.com/kevinrivm/vocero-crm/pull/71
 [#72]: https://github.com/kevinrivm/vocero-crm/pull/72
 [#73]: https://github.com/kevinrivm/vocero-crm/pull/73
+[#74]: https://github.com/kevinrivm/vocero-crm/pull/74

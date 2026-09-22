@@ -492,9 +492,9 @@ abierta? Revisa también los logs de la instancia.
 base64 (44 caracteres): `openssl rand -base64 32`.
 
 **La app arranca pero /api/health falla** — La base de datos no está lista,
-`DATABASE_URL` apunta mal o alguna variable no pasa la validación (p. ej. un
-`BRAIN_HEALTH_URL` sin `http://`): el healthcheck responde 503 en los tres
-casos. Revisa los logs (`docker compose logs app`); el de arranque nombra la
+`DATABASE_URL` apunta mal o alguna variable obligatoria no pasa la
+validación (p. ej. una `ENCRYPTION_KEY` mal generada): el healthcheck
+responde 503 en los tres casos. Revisa los logs (`docker compose logs app`); el de arranque nombra la
 variable que falló.
 
 **Subir el logo o el icono da error, o los adjuntos no se ven** — La app no
