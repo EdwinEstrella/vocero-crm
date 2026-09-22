@@ -2817,4 +2817,44 @@ async function r11BotChecks() {
     `/api/bot/context?waIdentity=${encodeURIComponent(`bsuid:MX.r11.nadie.${RUN}`)}`
   );
   ok("un BSUID que nadie tiene sigue en 404", nadie.res.status === 404, `status=${nadie.res.status}`);
+
+  /*
+   * 3. Pedir cita con la agenda apagada no termina en "Error del proveedor
+   *    de IA": el ai-mock ya no ofrece horarios que el prompt no le enseñó
+   *    (el esquema del turno los rechazaba y el agente traspasaba).
+   */
+  const agenda = /^(on|1|true|si|sí|yes)$/i.test((process.env.AGENDA ?? "").trim());
+  console.log(`\n== R11: pedir cita con la agenda ${agenda ? "encendida" : "apagada"} ==`);
+  await api("/api/agent/profile", { method: "PUT", body: JSON.stringify({ enabled: true }) });
+  const CANON_CITA = `524630${RUN}`;
+  await inbound({
+    from: `5214630${RUN}`,
+    name: `R11 Cita ${RUN}`,
+    text: "hola, ¿dan citas el sábado?",
+    waMessageId: `wamid.e2e.r11.cita.${RUN}`,
+  });
+  const salientesCita = async () => {
+    const c = await convDe(CANON_CITA);
+    return c ? (await mensajesDe(c.id)).filter((m) => m.direction === "out") : [];
+  };
+  await hasta(
+    async () =>
+      Boolean((await convDe(CANON_CITA))?.handoffAt) || (await salientesCita()).length > 0,
+    25000
+  );
+  const convCita = await convDe(CANON_CITA);
+  const salientes = await salientesCita();
+  ok(
+    "el agente contesta y NO traspasa por «Error del proveedor de IA»",
+    !convCita?.handoffAt && salientes.some((m) => m.origin === "ai"),
+    JSON.stringify({ reason: convCita?.handoffReason, salientes: salientes.map((m) => m.text) })
+  );
+  if (!agenda) {
+    ok(
+      "con la agenda apagada no ofrece horarios",
+      !salientes.some((m) => /horario/i.test(m.text ?? "")),
+      JSON.stringify(salientes.map((m) => m.text))
+    );
+  }
+  await api("/api/agent/profile", { method: "PUT", body: JSON.stringify({ enabled: false }) });
 }
