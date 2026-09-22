@@ -1,9 +1,26 @@
 # ============================================================
 # Vocero CRM — Ruta B: app + Postgres + Caddy (HTTPS automático)
-# Uso:  cp .env.example .env  →  rellenar  →  docker compose up -d --build
+# Uso:        cp .env.example .env  →  rellenar  →  docker compose up -d
+# Actualizar: git pull  →  docker compose up -d
+#
+# La app sale de la imagen publicada de la versión (una por tag vX.Y.Z). Con
+# `image` y `build` juntos y sin `pull_policy`, Compose usa la imagen si ya la
+# tienes; si no, la descarga, y solo si no la encuentra en el registro la
+# construye desde este repo (docs.docker.com/reference/compose-file/build,
+# «Using build and image»):
+#
+#   docker compose up -d           la imagen publicada
+#   docker compose up -d --build   construida desde el código (la publicada
+#                                  es linux/amd64: en un VPS ARM, construye)
+#
+# Lo que construyes queda en tu máquina con este mismo nombre de imagen. En un
+# fork con cambios propios usa siempre --build (o cambia `image:` por un
+# nombre tuyo): sin él, Compose descarga la imagen oficial y tus cambios no
+# corren. Otra versión publicada: VOCERO_CRM_VERSION=X.Y.Z en tu .env.
 # ============================================================
 services:
   app:
+    image: ghcr.io/kevinrivm/vocero-crm:${VOCERO_CRM_VERSION:-1.4.0}
     build: .
     restart: unless-stopped
     environment:
