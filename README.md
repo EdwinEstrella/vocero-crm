@@ -102,6 +102,15 @@ WABA**, guardar la conexión en Configuración → WhatsApp (o rotar el token) l
 respeta: Vocero ve el override en `GET /{WABA}/subscribed_apps` y no re-suscribe
 la app, que es justo lo que lo borraría.
 
+Arriba de la pantalla **Agente**, la tarjeta **«Quién responde a tus
+clientes»** dice quién está contestando: el agente incluido (encendido y con
+token de IA) o tu cerebro externo, con su última llamada a la API y —si
+defines `BRAIN_HEALTH_URL`, p. ej. `http://nea:8000/health`— si está en
+línea, su versión, su modo y cuántos mensajes le faltan por relevar. Los dos
+no se ven entre sí, así que si ambos están activos tu cliente recibe dos
+respuestas: la tarjeta lo marca en rojo y te dice cómo quitarlo (apagar el
+agente incluido o quitar `OPENROUTER_API_TOKEN`).
+
 Agente de referencia: [nea-agent](https://github.com/kevinrivm/nea-agent), MIT.
 
 ### 📅 Agenda con huecos reales (opcional, apagada por defecto)

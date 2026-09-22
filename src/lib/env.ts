@@ -8,6 +8,16 @@ import { z } from "zod";
  * que en esa fase se aceptan placeholders — los valores reales llegan al boot.
  */
 
+/** http(s) y nada más. Zod corre el refine aunque `.url()` ya haya fallado,
+ *  así que tampoco puede lanzar con un valor que no es URL. */
+function isHttpUrl(value: string): boolean {
+  try {
+    return /^https?:$/.test(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
 const envSchema = z.object({
   APP_BASE_URL: z.string().url(),
   DATABASE_URL: z.string().min(1),
@@ -53,6 +63,16 @@ const envSchema = z.object({
   // API key de un cerebro externo que conduzca la conversación por /api/bot/*.
   // Sin ella, toda esa superficie responde 401.
   BOT_API_KEY: z.string().optional(),
+  // «Quién responde a tus clientes»: el /health del cerebro externo (Nea),
+  // consultado desde el servidor. Ej.: http://nea:8000/health (alias de la
+  // red de Coolify). Sin ella, la tarjeta del Agente no pregunta a nadie.
+  BRAIN_HEALTH_URL: z
+    .string()
+    .url()
+    .refine(isHttpUrl, {
+      message: "BRAIN_HEALTH_URL debe empezar con http:// o https://",
+    })
+    .optional(),
   // 008: volumen local de adjuntos (constitución II: sin S3/R2).
   MEDIA_DIR: z.string().default("./.dev-media"),
   NODE_ENV: z.string().default("development"),
