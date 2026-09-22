@@ -53,6 +53,7 @@ const RUTAS = [
   "/inbox",
   "/pipeline",
   "/contacts",
+  "/results",
   "/agent",
   "/lab",
   "/settings/whatsapp",
