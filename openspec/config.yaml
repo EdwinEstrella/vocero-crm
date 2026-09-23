@@ -1,0 +1,55 @@
+schema: spec-driven
+
+context: |
+  Project: Vocero CRM, a self-hosted WhatsApp CRM with an optional AI agent and Lab.
+  Stack: Next.js 15 App Router, React 19, strict TypeScript, Tailwind CSS, PostgreSQL, Drizzle ORM, Better Auth, Zod, pnpm.
+  Architecture: Monolithic Next.js application; SSE real-time events; in-process background work; Docker multi-stage deployment.
+  Integrations: WhatsApp Cloud API and optional OpenRouter-compatible LLM; optional channels, attribution, and agenda connectors are feature-flagged.
+  Conventions: organization-scoped data access, encrypted secrets, idempotent webhooks, nanoid prefixes, versioned Drizzle migrations.
+  Quality: typecheck, lint, build, unit tests, and behavior-level E2E self-tests with mocks are required before declaring work complete.
+
+strict_tdd: true
+
+testing:
+  runner:
+    command: pnpm test
+    framework: Vitest 2
+  layers:
+    unit: "pnpm test — tests/unit/**/*.test.ts"
+    integration: unavailable
+    e2e: "pnpm test:e2e — scripts/e2e-selftest.mjs with the app and mocks running"
+  coverage:
+    available: false
+    command: ""
+  quality:
+    linter: "pnpm lint — ESLint 9 with Next core-web-vitals and TypeScript configs"
+    typechecker: "pnpm typecheck — TypeScript strict/noUncheckedIndexedAccess"
+    formatter: unavailable
+  build: pnpm build
+
+rules:
+  proposal:
+    - State the user-visible problem, scope, out of scope, risks, and rollback plan for risky changes.
+  specs:
+    - Describe observable behavior with Given/When/Then scenarios.
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY) where normative behavior is required.
+    - Declare the constitutional lane before implementation; data-model or published-contract changes require the full cycle.
+  design:
+    - Preserve tenant isolation, encrypted secrets, idempotency, sandbox guardrails, and optional-module boundaries.
+    - Document architecture decisions and rationale; include a sequence diagram for complex flows.
+  tasks:
+    - Group tasks by phase, use hierarchical numbering, and keep each task completable in one session.
+    - Include unit, integration, and behavior-level verification tasks when applicable.
+  apply:
+    tdd: true
+    test_command: pnpm test
+    guidelines:
+      - Follow existing code boundaries and add tests before implementation for behavior changes.
+      - Run pnpm typecheck, pnpm lint, pnpm build, and the relevant E2E self-test before completion.
+  verify:
+    test_command: pnpm test
+    build_command: pnpm typecheck && pnpm lint && pnpm build
+    coverage_threshold: 0
+    behavior_command: pnpm test:e2e
+  archive:
+    - Warn before merging destructive deltas and retain the archived change as an audit trail.

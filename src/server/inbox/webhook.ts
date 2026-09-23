@@ -27,9 +27,10 @@ export function isValidWebhookToken(
 export function isValidSignature(
   rawBody: string,
   signatureHeader: string | null,
-  appSecret: string | undefined
+  appSecret: string | undefined,
+  required = false
 ): boolean {
-  if (!appSecret) return true;
+  if (!appSecret) return !required;
   if (!signatureHeader?.startsWith("sha256=")) return false;
   const expected = createHmac("sha256", appSecret)
     .update(rawBody, "utf8")
@@ -97,6 +98,10 @@ export type WebhookMessage = {
   contacts?: unknown[];
   /** 016: origen del anuncio, cuando la conversación nació de uno. */
   referral?: WebhookReferral;
+  /** Fixture-locked coexistence echo mutation reference. */
+  context?: { id?: string };
+  edit?: { body?: string };
+  revoke?: boolean;
 };
 
 export type WebhookStatus = {
@@ -121,6 +126,7 @@ export type WebhookValue = {
   message_template_language?: string;
   message_template_id?: number | string;
   reason?: string | null;
+  coexistence?: { event?: "confirmed" | "rejected" | "revoked" | "disconnected"; consented_at?: string };
 };
 
 export type WebhookChange = { field?: string; value?: WebhookValue };

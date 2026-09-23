@@ -1,5 +1,5 @@
 import { after } from "next/server";
-import { getEnv } from "@/lib/env";
+import { getEnv, isWhatsappEmbeddedSignupEnabled } from "@/lib/env";
 import {
   isValidSignature,
   isValidWebhookToken,
@@ -7,6 +7,7 @@ import {
 } from "@/server/inbox/webhook";
 import { processEchoesValue, processMessagesValue } from "@/server/inbox/ingest";
 import { processTemplateStatusValue } from "@/server/whatsapp/template-events";
+import { enqueueCoexistencePayload } from "@/server/whatsapp/sync-worker";
 
 /**
  * Webhook público de WhatsApp (contrato webhook.md).
@@ -45,7 +46,7 @@ export async function POST(req: Request, { params }: Params) {
 
   const rawBody = await req.text();
   const signature = req.headers.get("x-hub-signature-256");
-  if (!isValidSignature(rawBody, signature, env.META_APP_SECRET)) {
+  if (!isValidSignature(rawBody, signature, env.META_APP_SECRET, isWhatsappEmbeddedSignupEnabled())) {
     return new Response(null, { status: 401 });
   }
 
@@ -55,6 +56,17 @@ export async function POST(req: Request, { params }: Params) {
   } catch {
     // body ilegible: 200 igualmente (Meta reintenta y termina desactivando)
     return Response.json({ received: true });
+  }
+
+  // Coexistence work is durably accepted before the 200. The regular inbox
+  // remains asynchronous, while lifecycle/history never depends on `after()`.
+  if (isWhatsappEmbeddedSignupEnabled()) {
+    try {
+      await enqueueCoexistencePayload(payload);
+    } catch (error) {
+      console.error("[webhook] no se pudo persistir coexistence antes de responder:", error);
+      return new Response(null, { status: 503 });
+    }
   }
 
   after(async () => {

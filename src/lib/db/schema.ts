@@ -423,6 +423,10 @@ export const message = pgTable(
     })
       .notNull()
       .default("operator"),
+    /** `history` is imported side-effect-free; existing and live traffic are live. */
+    importSource: text("import_source", { enum: ["live", "history"] })
+      .notNull()
+      .default("live"),
     /** 008 — Adjunto del mensaje (imagen, doc, ubicación…), si lo hay. */
     mediaAssetId: text("media_asset_id").references(() => mediaAsset.id, {
       onDelete: "set null",
@@ -512,6 +516,74 @@ export const metaCredentials = pgTable(
     uniqueIndex("meta_credentials_org_uq").on(t.organizationId),
     // El webhook enruta por phone_number_id: debe ser único en la instancia.
     uniqueIndex("meta_credentials_phone_uq").on(t.phoneNumberId),
+  ]
+);
+
+/** Pending coexistence credentials are isolated from the active send path. */
+export const whatsappCoexistenceAttempt = pgTable(
+  "whatsapp_coexistence_attempt",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    ownerUserId: text("owner_user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    stateHash: text("state_hash").notNull(),
+    nonceHash: text("nonce_hash").notNull(),
+    status: text("status", { enum: ["pending", "awaiting_confirmation", "active", "rejected", "revoked", "disconnected"] }).notNull().default("pending"),
+    reason: text("reason"),
+    phoneNumberId: text("phone_number_id"),
+    consentedAt: timestamp("consented_at"),
+    expiresAt: timestamp("expires_at").notNull(),
+    consumedAt: timestamp("consumed_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("wa_coexistence_attempt_state_uq").on(t.stateHash),
+    index("wa_coexistence_attempt_org_idx").on(t.organizationId, t.createdAt),
+  ]
+);
+
+export const whatsappCoexistenceClaim = pgTable(
+  "whatsapp_coexistence_claim",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    attemptId: text("attempt_id").notNull().references(() => whatsappCoexistenceAttempt.id, { onDelete: "cascade" }),
+    phoneNumberId: text("phone_number_id").notNull(),
+    wabaId: text("waba_id").notNull(),
+    tokenCipher: text("token_cipher").notNull(),
+    tokenIv: text("token_iv").notNull(),
+    tokenTag: text("token_tag").notNull(),
+    status: text("status", { enum: ["awaiting_confirmation", "active", "rejected", "revoked", "disconnected"] }).notNull().default("awaiting_confirmation"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("wa_coexistence_claim_phone_uq").on(t.phoneNumberId),
+    uniqueIndex("wa_coexistence_claim_attempt_uq").on(t.attemptId),
+    index("wa_coexistence_claim_org_idx").on(t.organizationId, t.status),
+  ]
+);
+
+export const whatsappCoexistenceDelivery = pgTable(
+  "whatsapp_coexistence_delivery",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    eventKey: text("event_key").notNull(),
+    kind: text("kind").notNull(),
+    payload: jsonb("payload").notNull(),
+    status: text("status", { enum: ["pending", "processing", "succeeded", "retryable", "dead", "unsupported"] }).notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
+    leaseUntil: timestamp("lease_until"),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("wa_coexistence_delivery_org_event_uq").on(t.organizationId, t.eventKey),
+    index("wa_coexistence_delivery_ready_idx").on(t.status, t.nextAttemptAt),
   ]
 );
 

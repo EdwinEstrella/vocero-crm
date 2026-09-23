@@ -50,6 +50,10 @@ describe("capa 2: firma x-hub-signature-256 (FR-042)", () => {
     expect(isValidSignature(body, null, undefined)).toBe(true);
     expect(isValidSignature(body, "sha256=basura", undefined)).toBe(true);
   });
+
+  it("first-party coexistence never accepts an unsigned delivery", () => {
+    expect(isValidSignature(body, null, undefined, true)).toBe(false);
+  });
 });
 
 describe("safeEqual", () => {

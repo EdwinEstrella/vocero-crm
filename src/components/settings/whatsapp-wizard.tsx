@@ -30,9 +30,56 @@ type WebhookInfo = {
   signatureLayer: boolean;
 };
 
+type EmbeddedSignup = {
+  appId: string;
+  configId: string;
+};
+
+type CoexistenceStatus = {
+  status: string;
+  reason: string | null;
+  expiresAt: string;
+  phoneNumberId: string | null;
+};
+
+type FacebookSdk = {
+  init: (options: { appId: string; cookie: boolean; xfbml: boolean; version: string }) => void;
+  login: (
+    callback: (response: { authResponse?: { code?: string } }) => void,
+    options: Record<string, unknown>
+  ) => void;
+};
+
+declare global {
+  interface Window {
+    FB?: FacebookSdk;
+  }
+}
+
+function loadFacebookSdk(): Promise<FacebookSdk> {
+  if (window.FB) return Promise.resolve(window.FB);
+  return new Promise((resolve, reject) => {
+    const existing = document.getElementById("facebook-jssdk") as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener("load", () => (window.FB ? resolve(window.FB) : reject(new Error("Meta SDK unavailable"))), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Meta SDK unavailable")), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.id = "facebook-jssdk";
+    script.src = "https://connect.facebook.net/en_US/sdk.js";
+    script.async = true;
+    script.onload = () => (window.FB ? resolve(window.FB) : reject(new Error("Meta SDK unavailable")));
+    script.onerror = () => reject(new Error("Meta SDK unavailable"));
+    document.head.appendChild(script);
+  });
+}
+
 export function WhatsappWizard() {
   const [connection, setConnection] = useState<Connection | null>(null);
   const [webhook, setWebhook] = useState<WebhookInfo | null>(null);
+  const [embeddedSignup, setEmbeddedSignup] = useState<EmbeddedSignup | null>(null);
+  const [coexistence, setCoexistence] = useState<CoexistenceStatus | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   const refetch = useCallback(async () => {
@@ -40,7 +87,11 @@ export function WhatsappWizard() {
       fetch("/api/settings/whatsapp").then((r) => (r.ok ? r.json() : null)),
       fetch("/api/settings/webhook").then((r) => (r.ok ? r.json() : null)),
     ]).catch(() => [null, null]);
-    if (c) setConnection(c.connection);
+    if (c) {
+      setConnection(c.connection);
+      setEmbeddedSignup(c.embeddedSignup ?? null);
+      setCoexistence(c.coexistence ?? null);
+    }
     if (w) setWebhook(w);
     setLoaded(true);
   }, []);
@@ -86,10 +137,124 @@ export function WhatsappWizard() {
         </div>
       )}
 
+      {embeddedSignup && (
+        <EmbeddedSignupCard
+          config={embeddedSignup}
+          coexistence={coexistence}
+          onChanged={() => void refetch()}
+        />
+      )}
+
       <ConnectForm existing={connection} onSaved={() => void refetch()} />
 
       {webhook && <WebhookCard webhook={webhook} />}
     </div>
+  );
+}
+
+function EmbeddedSignupCard({
+  config,
+  coexistence,
+  onChanged,
+}: {
+  config: EmbeddedSignup;
+  coexistence: CoexistenceStatus | null;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  async function start() {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const startResponse = await fetch("/api/settings/whatsapp/start", { method: "POST" });
+      const startData = (await startResponse.json().catch(() => null)) as {
+        attempt?: { state: string };
+        error?: { message?: string };
+      } | null;
+      if (!startResponse.ok || !startData?.attempt) {
+        throw new Error(startData?.error?.message ?? "No se pudo iniciar la conexión con Meta");
+      }
+      const sdk = await loadFacebookSdk();
+      sdk.init({ appId: config.appId, cookie: true, xfbml: false, version: "v25.0" });
+      const completed = await new Promise<boolean>((resolve) => {
+        sdk.login(
+          (response) => resolve(Boolean(response.authResponse?.code)),
+          {
+            config_id: config.configId,
+            response_type: "code",
+            override_default_response_type: true,
+            extras: {
+              setup: {},
+              featureType: "whatsapp_business_app_onboarding",
+              sessionInfoVersion: "3",
+            },
+          }
+        );
+      });
+      if (!completed) {
+        setNotice("Meta cerró o rechazó el registro. Tu conexión actual no cambió.");
+        return;
+      }
+      // The code is intentionally never displayed or persisted in the browser.
+      // Asset IDs are not inferred from an unauthenticated postMessage payload.
+      setNotice("Meta completó el paso del navegador. Espera la confirmación firmada antes de cambiar credenciales.");
+      onChanged();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo cargar Embedded Signup");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnect() {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const response = await fetch("/api/settings/whatsapp/disconnect", { method: "POST" });
+      const data = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+      if (!response.ok) throw new Error(data?.error?.message ?? "No se pudo desconectar");
+      setNotice("La conexión de coexistencia fue desconectada.");
+      onChanged();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo desconectar");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const terminal = coexistence?.status === "rejected" || coexistence?.status === "revoked" || coexistence?.status === "disconnected";
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Conectar con WhatsApp Business</CardTitle>
+        <CardDescription>
+          Conserva tu aplicación WhatsApp Business mientras Meta confirma la coexistencia. Solo el dueño de la organización puede iniciar o desconectar este flujo.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {coexistence && (
+          <p className={terminal ? "text-sm text-destructive" : "text-sm text-muted-foreground"} role="status">
+            Estado: {coexistence.status}{coexistence.reason ? ` — ${coexistence.reason}` : ""}
+          </p>
+        )}
+        {notice && <p className="text-sm text-muted-foreground" role="status">{notice}</p>}
+        <div className="flex gap-2">
+          <Button disabled={busy} onClick={() => void start()}>
+            {busy ? "Abriendo Meta…" : "Conectar con Meta"}
+          </Button>
+          {coexistence && (
+            <Button variant="outline" disabled={busy} onClick={() => void disconnect()}>
+              Desconectar coexistencia
+            </Button>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Por seguridad, Vocero no toma IDs de activos ni credenciales desde mensajes del navegador. La activación requiere la confirmación firmada de Meta.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 

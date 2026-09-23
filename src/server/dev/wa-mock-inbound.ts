@@ -211,6 +211,64 @@ export function buildEchoPayload(input: {
   };
 }
 
+/**
+ * Development-only payload control. It deliberately mirrors only the narrow
+ * shape admitted by the coexistence decoder; it is not an authenticated Meta
+ * fixture and must never expand the production admission boundary.
+ */
+export function buildCoexistenceLifecyclePayload(input: {
+  wabaId: string;
+  phoneNumberId: string;
+  event: "confirmed" | "rejected" | "revoked" | "disconnected";
+}) {
+  return {
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: input.wabaId,
+        changes: [
+          {
+            field: "account_update",
+            value: {
+              metadata: { phone_number_id: input.phoneNumberId },
+              coexistence: { event: input.event },
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/** A consent marker is mandatory even in the development harness. */
+export function buildCoexistenceHistoryPayload(input: {
+  wabaId: string;
+  phoneNumberId: string;
+  consentedAt: string;
+  messages: Record<string, unknown>[];
+  contacts?: Record<string, unknown>[];
+}) {
+  return {
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: input.wabaId,
+        changes: [
+          {
+            field: "history",
+            value: {
+              metadata: { phone_number_id: input.phoneNumberId },
+              coexistence: { consented_at: input.consentedAt },
+              messages: input.messages,
+              ...(input.contacts ? { contacts: input.contacts } : {}),
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
 export function buildStatusPayload(input: {
   wabaId: string;
   phoneNumberId: string;

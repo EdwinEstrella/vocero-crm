@@ -3,6 +3,8 @@ import path from "node:path";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { getEnv } from "@/lib/env";
+import { isWhatsappEmbeddedSignupEnabled } from "@/lib/env";
+import { drainCoexistenceDeliveries } from "@/server/whatsapp/sync-worker";
 
 /**
  * 008 — Aviso al arranque si MEDIA_DIR no es escribible. Sin esto, el primer
@@ -59,4 +61,18 @@ export async function cleanupOrphanRuns(): Promise<void> {
     // La BD puede no estar lista aún (migraciones corren antes del server).
     console.error("[boot] limpieza de corridas huérfanas falló:", err);
   }
+}
+
+/** One bounded in-process coexistence drain per process; failures stay observable in the inbox. */
+export function startCoexistenceWorker(): void {
+  if (!isWhatsappEmbeddedSignupEnabled()) return;
+  const timer = setInterval(() => {
+    void drainCoexistenceDeliveries().catch((error) =>
+      console.error("[coexistence] inbox drainer failed:", error)
+    );
+  }, 5_000);
+  timer.unref();
+  void drainCoexistenceDeliveries().catch((error) =>
+    console.error("[coexistence] initial inbox drain failed:", error)
+  );
 }

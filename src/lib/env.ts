@@ -20,6 +20,11 @@ const envSchema = z.object({
     }),
   META_WEBHOOK_VERIFY_TOKEN: z.string().min(8),
   META_APP_SECRET: z.string().optional(),
+  // Embedded Signup v4 coexistence remains off until both Meta configuration
+  // and the first-party webhook signature secret are present.
+  WHATSAPP_EMBEDDED_SIGNUP: z.string().optional(),
+  META_APP_ID: z.string().optional(),
+  META_EMBEDDED_SIGNUP_CONFIG_ID: z.string().optional(),
   META_GRAPH_API_VERSION: z.string().default("v25.0"),
   META_GRAPH_BASE_URL: z.string().url().default("https://graph.facebook.com"),
   OPENROUTER_API_TOKEN: z.string().optional(),
@@ -120,4 +125,16 @@ export function isMockEnabled(): boolean {
 export function isAiConfigured(): boolean {
   const token = process.env.OPENROUTER_API_TOKEN;
   return typeof token === "string" && token.trim().length > 0;
+}
+
+export function isWhatsappEmbeddedSignupEnabled(): boolean {
+  const enabled = /^(on|1|true|yes)$/i.test(process.env.WHATSAPP_EMBEDDED_SIGNUP ?? "");
+  if (!enabled) return false;
+  const env = getEnv();
+  if (!env.META_APP_SECRET || !env.META_APP_ID || !env.META_EMBEDDED_SIGNUP_CONFIG_ID) {
+    throw new Error(
+      "WHATSAPP_EMBEDDED_SIGNUP requiere META_APP_SECRET, META_APP_ID y META_EMBEDDED_SIGNUP_CONFIG_ID"
+    );
+  }
+  return true;
 }

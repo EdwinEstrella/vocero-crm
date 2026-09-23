@@ -24,6 +24,7 @@ import {
 import { registrarAnuncioDeOrigen } from "@/server/attribution/store";
 import { onLeadActivity } from "@/server/inbox/lead-activity";
 import { maybeRunAgentTurn } from "@/server/ai/trigger";
+import { decodeEchoMutation, historyMessageIsEligible } from "@/server/whatsapp/lifecycle";
 
 /** Tipos de contenido soportados; el resto se ignora sin error. */
 const SUPPORTED_TYPES = new Set([
@@ -282,6 +283,11 @@ export async function processEchoesValue(value: WebhookValue): Promise<void> {
   // Meta documenta `message_echoes`; parser tolerante a `messages` (R1).
   const echoes = value.message_echoes ?? value.messages ?? [];
   for (const echo of echoes) {
+    const mutation = decodeEchoMutation(echo);
+    if (mutation) {
+      await applyEchoMutation(credentials.organizationId, mutation);
+      continue;
+    }
     if (!SUPPORTED_TYPES.has(echo.type)) continue;
     if (!echo.to) {
       console.warn(`[webhook] echo ${echo.id} sin destinatario: descartado`);
@@ -293,6 +299,60 @@ export async function processEchoesValue(value: WebhookValue): Promise<void> {
       // Un echo malformado jamás tumba el webhook (edge case del spec).
       console.error(`[webhook] error procesando echo ${echo.id}:`, err);
     }
+  }
+}
+
+/** Applies an idempotent Business-app edit/revoke without creating a new row. */
+async function applyEchoMutation(
+  organizationId: string,
+  mutation: NonNullable<ReturnType<typeof decodeEchoMutation>>
+): Promise<void> {
+  const db = getDb();
+  if (mutation.kind === "edit") {
+    await db
+      .update(schema.message)
+      .set({ text: mutation.text })
+      .where(and(eq(schema.message.organizationId, organizationId), eq(schema.message.waMessageId, mutation.originalMessageId)));
+    return;
+  }
+  await db
+    .update(schema.message)
+    .set({ text: null, status: "failed", error: "Message revoked" })
+    .where(and(eq(schema.message.organizationId, organizationId), eq(schema.message.waMessageId, mutation.originalMessageId)));
+}
+
+/**
+ * Persists consented historical traffic through identity/upsert primitives only.
+ * It deliberately does not update unread counts, timestamps, lead activity, SSE,
+ * media downloads, or AI: a history import must never look like live traffic.
+ */
+export async function ingestHistoricalMessages(input: {
+  organizationId: string;
+  messages: WebhookMessage[];
+  contacts?: WebhookValue["contacts"];
+}): Promise<void> {
+  const db = getDb();
+  for (const message of input.messages) {
+    if (!SUPPORTED_TYPES.has(message.type) || !historyMessageIsEligible(message)) continue;
+    const identity = resolveIdentity(message, input.contacts);
+    if (!identity) continue;
+    const { contact } = await getOrCreateContactByIdentity(input.organizationId, identity);
+    const conversation = await getOrCreateConversation(input.organizationId, contact.id);
+    await db
+      .insert(schema.message)
+      .values({
+        id: newId("message"),
+        organizationId: input.organizationId,
+        conversationId: conversation.id,
+        waMessageId: message.id,
+        direction: "in",
+        type: message.type,
+        text: message.text?.body ?? null,
+        status: "delivered",
+        importSource: "history",
+        waTimestamp: toDate(message.timestamp),
+      })
+      .onConflictDoNothing({ target: [schema.message.waMessageId] });
   }
 }
 

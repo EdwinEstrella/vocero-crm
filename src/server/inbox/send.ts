@@ -31,6 +31,7 @@ import {
 } from "@/server/channels/capabilities";
 import { isChannelEnabled } from "@/server/channels/enabled";
 import { serializeMessage } from "@/server/inbox/ingest";
+import { isCoexistenceSendBlocked } from "@/server/whatsapp/coexistence";
 import {
   saveMediaFile,
   uploadGraphMedia,
@@ -197,6 +198,12 @@ async function prepareSend(
   }
 
   const credentials = await getCredentialsByOrg(organizationId);
+  if (await isCoexistenceSendBlocked(organizationId)) {
+    throw new SendError(
+      "not_connected",
+      "La conexión de coexistencia fue desconectada o revocada; vuelve a conectarla desde Configuración"
+    );
+  }
   if (!credentials) {
     throw new SendError("not_connected", "No hay número de WhatsApp conectado");
   }
