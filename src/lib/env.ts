@@ -139,15 +139,8 @@ export type WhatsappEmbeddedSignupAvailability = {
  * values. A partially configured module stays safely unavailable rather than
  * making the WhatsApp settings route fail.
  */
-type WhatsappEmbeddedSignupEnvironment = {
-  WHATSAPP_EMBEDDED_SIGNUP?: string;
-  META_APP_SECRET?: string;
-  META_APP_ID?: string;
-  META_EMBEDDED_SIGNUP_CONFIG_ID?: string;
-};
-
 export function getWhatsappEmbeddedSignupAvailability(
-  input: WhatsappEmbeddedSignupEnvironment = process.env
+  input: Record<string, string | undefined> = process.env
 ): WhatsappEmbeddedSignupAvailability {
   const enabled = /^(on|1|true|yes)$/i.test(input.WHATSAPP_EMBEDDED_SIGNUP ?? "");
   const missing = [
