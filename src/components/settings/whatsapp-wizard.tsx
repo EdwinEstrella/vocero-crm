@@ -42,6 +42,11 @@ type CoexistenceStatus = {
   phoneNumberId: string | null;
 };
 
+type CoexistenceSetup = {
+  state: "disabled" | "configuration_required" | "available";
+  missing: string[];
+};
+
 type FacebookSdk = {
   init: (options: { appId: string; cookie: boolean; xfbml: boolean; version: string }) => void;
   login: (
@@ -80,6 +85,7 @@ export function WhatsappWizard() {
   const [webhook, setWebhook] = useState<WebhookInfo | null>(null);
   const [embeddedSignup, setEmbeddedSignup] = useState<EmbeddedSignup | null>(null);
   const [coexistence, setCoexistence] = useState<CoexistenceStatus | null>(null);
+  const [coexistenceSetup, setCoexistenceSetup] = useState<CoexistenceSetup | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   const refetch = useCallback(async () => {
@@ -91,6 +97,7 @@ export function WhatsappWizard() {
       setConnection(c.connection);
       setEmbeddedSignup(c.embeddedSignup ?? null);
       setCoexistence(c.coexistence ?? null);
+      setCoexistenceSetup(c.coexistenceSetup ?? null);
     }
     if (w) setWebhook(w);
     setLoaded(true);
@@ -145,10 +152,41 @@ export function WhatsappWizard() {
         />
       )}
 
+      {!embeddedSignup && coexistenceSetup && coexistenceSetup.state !== "available" && (
+        <CoexistenceUnavailableCard setup={coexistenceSetup} />
+      )}
+
       <ConnectForm existing={connection} onSaved={() => void refetch()} />
 
       {webhook && <WebhookCard webhook={webhook} />}
     </div>
+  );
+}
+
+function CoexistenceUnavailableCard({ setup }: { setup: CoexistenceSetup }) {
+  const isDisabled = setup.state === "disabled";
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Coexistencia con WhatsApp Business</CardTitle>
+        <CardDescription>
+          Esta es una alternativa al alta manual de WABA, Phone Number ID y token de abajo. Permite conservar la aplicación WhatsApp Business mientras Meta completa la conexión.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <p className="text-sm text-muted-foreground" role="status">
+          {isDisabled
+            ? "Coexistencia está desactivada en esta instancia."
+            : "Coexistencia está desactivada porque falta configuración de Meta."}
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Para habilitarla, el responsable del despliegue debe configurar {setup.missing.join(", ")} y reiniciar la instancia. META_APP_SECRET habilita la firma obligatoria de los webhooks; META_APP_ID y META_EMBEDDED_SIGNUP_CONFIG_ID identifican la app y la configuración pública de Embedded Signup en Meta.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Vocero no confirma números, activos ni credenciales desde el navegador. Hasta que Meta esté configurado y confirme la conexión, usa el alta manual si ya tienes credenciales Cloud API.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 

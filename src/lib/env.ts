@@ -127,14 +127,41 @@ export function isAiConfigured(): boolean {
   return typeof token === "string" && token.trim().length > 0;
 }
 
+export type WhatsappEmbeddedSignupAvailability = {
+  state: "disabled" | "configuration_required" | "available";
+  missing: Array<
+    "WHATSAPP_EMBEDDED_SIGNUP" | "META_APP_SECRET" | "META_APP_ID" | "META_EMBEDDED_SIGNUP_CONFIG_ID"
+  >;
+};
+
+/**
+ * Resolves the owner-facing Embedded Signup state without exposing configuration
+ * values. A partially configured module stays safely unavailable rather than
+ * making the WhatsApp settings route fail.
+ */
+type WhatsappEmbeddedSignupEnvironment = {
+  WHATSAPP_EMBEDDED_SIGNUP?: string;
+  META_APP_SECRET?: string;
+  META_APP_ID?: string;
+  META_EMBEDDED_SIGNUP_CONFIG_ID?: string;
+};
+
+export function getWhatsappEmbeddedSignupAvailability(
+  input: WhatsappEmbeddedSignupEnvironment = process.env
+): WhatsappEmbeddedSignupAvailability {
+  const enabled = /^(on|1|true|yes)$/i.test(input.WHATSAPP_EMBEDDED_SIGNUP ?? "");
+  const missing = [
+    !enabled ? "WHATSAPP_EMBEDDED_SIGNUP" : null,
+    !input.META_APP_SECRET ? "META_APP_SECRET" : null,
+    !input.META_APP_ID ? "META_APP_ID" : null,
+    !input.META_EMBEDDED_SIGNUP_CONFIG_ID ? "META_EMBEDDED_SIGNUP_CONFIG_ID" : null,
+  ].filter((value): value is WhatsappEmbeddedSignupAvailability["missing"][number] => value !== null);
+
+  if (!enabled) return { state: "disabled", missing };
+  if (missing.length > 0) return { state: "configuration_required", missing };
+  return { state: "available", missing: [] };
+}
+
 export function isWhatsappEmbeddedSignupEnabled(): boolean {
-  const enabled = /^(on|1|true|yes)$/i.test(process.env.WHATSAPP_EMBEDDED_SIGNUP ?? "");
-  if (!enabled) return false;
-  const env = getEnv();
-  if (!env.META_APP_SECRET || !env.META_APP_ID || !env.META_EMBEDDED_SIGNUP_CONFIG_ID) {
-    throw new Error(
-      "WHATSAPP_EMBEDDED_SIGNUP requiere META_APP_SECRET, META_APP_ID y META_EMBEDDED_SIGNUP_CONFIG_ID"
-    );
-  }
-  return true;
+  return getWhatsappEmbeddedSignupAvailability().state === "available";
 }

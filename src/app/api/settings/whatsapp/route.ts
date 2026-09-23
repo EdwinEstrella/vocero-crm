@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { apiError, parseBody, withAuth } from "@/lib/api";
-import { getEnv, isWhatsappEmbeddedSignupEnabled } from "@/lib/env";
+import { getEnv, getWhatsappEmbeddedSignupAvailability, isWhatsappEmbeddedSignupEnabled } from "@/lib/env";
 import { canPresentEmbeddedSignup, getCoexistenceStatus } from "@/server/whatsapp/coexistence";
 import {
   getCredentialsByOrg,
@@ -18,6 +18,9 @@ export const GET = withAuth(async (session) => {
     enabled: embeddedSignupEnabled,
     role: session.role,
   });
+  const coexistenceSetup = session.role === "owner"
+    ? getWhatsappEmbeddedSignupAvailability()
+    : null;
   const coexistence = canManageCoexistence
     ? await getCoexistenceStatus(session.organizationId)
     : null;
@@ -27,7 +30,7 @@ export const GET = withAuth(async (session) => {
         configId: getEnv().META_EMBEDDED_SIGNUP_CONFIG_ID!,
       }
     : null;
-  if (!creds) return Response.json({ connection: null, coexistence, embeddedSignup });
+  if (!creds) return Response.json({ connection: null, coexistence, embeddedSignup, coexistenceSetup });
   return Response.json({
     connection: {
       wabaId: creds.wabaId,
@@ -39,6 +42,7 @@ export const GET = withAuth(async (session) => {
     },
     coexistence,
     embeddedSignup,
+    coexistenceSetup,
   });
 });
 

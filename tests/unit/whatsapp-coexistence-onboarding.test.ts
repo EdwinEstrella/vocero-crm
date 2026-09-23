@@ -8,8 +8,42 @@ import {
   redactAttemptForOwner,
   redactCoexistenceStatus,
 } from "@/server/whatsapp/coexistence";
+import { getWhatsappEmbeddedSignupAvailability } from "@/lib/env";
 
 describe("coexistence onboarding guards", () => {
+  it("explains which first-party configuration is missing instead of hiding coexistence behind manual WABA setup", () => {
+    expect(
+      getWhatsappEmbeddedSignupAvailability({
+        WHATSAPP_EMBEDDED_SIGNUP: undefined,
+        META_APP_SECRET: undefined,
+        META_APP_ID: undefined,
+        META_EMBEDDED_SIGNUP_CONFIG_ID: undefined,
+      })
+    ).toEqual({
+      state: "disabled",
+      missing: ["WHATSAPP_EMBEDDED_SIGNUP", "META_APP_SECRET", "META_APP_ID", "META_EMBEDDED_SIGNUP_CONFIG_ID"],
+    });
+    expect(
+      getWhatsappEmbeddedSignupAvailability({
+        WHATSAPP_EMBEDDED_SIGNUP: "on",
+        META_APP_SECRET: undefined,
+        META_APP_ID: undefined,
+        META_EMBEDDED_SIGNUP_CONFIG_ID: undefined,
+      })
+    ).toEqual({
+      state: "configuration_required",
+      missing: ["META_APP_SECRET", "META_APP_ID", "META_EMBEDDED_SIGNUP_CONFIG_ID"],
+    });
+    expect(
+      getWhatsappEmbeddedSignupAvailability({
+        WHATSAPP_EMBEDDED_SIGNUP: "on",
+        META_APP_SECRET: "app-secret",
+        META_APP_ID: "app-id",
+        META_EMBEDDED_SIGNUP_CONFIG_ID: "config-id",
+      })
+    ).toEqual({ state: "available", missing: [] });
+  });
+
   it("presents Embedded Signup only to an owner when the optional module is enabled", () => {
     expect(canPresentEmbeddedSignup({ enabled: true, role: "owner" })).toBe(true);
     expect(canPresentEmbeddedSignup({ enabled: true, role: "member" })).toBe(false);
