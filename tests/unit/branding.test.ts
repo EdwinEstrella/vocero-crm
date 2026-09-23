@@ -7,9 +7,11 @@ import {
   isValidHex,
   normalizeBranding,
   resolveAccentSet,
+  resolveNavAccentSet,
 } from "@/lib/branding";
 
-const DARK_BG = "#0b1327";
+const DARK_BG = "#1c263c";
+const NAV_BG = "#0b1327";
 
 /** Contraste WCAG entre dos hex, para afirmar sobre legibilidad y no sobre
  *  valores concretos: lo que importa es que se LEA, no que dé cierto color. */
@@ -28,7 +30,9 @@ function contrast(a: string, b: string): number {
 function variables(css: string, selector: string): Record<string, string> {
   const inicio = css.indexOf(selector);
   expect(inicio, `no está el bloque ${selector}`).toBeGreaterThanOrEqual(0);
-  const cuerpo = css.slice(css.indexOf("{", inicio) + 1, css.indexOf("}", inicio));
+  const cuerpo = css
+    .slice(css.indexOf("{", inicio) + 1, css.indexOf("}", inicio))
+    .replace(/\/\*[\s\S]*?\*\//g, ""); // un comentario puede nombrar un token
   return Object.fromEntries(
     [...cuerpo.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [
       m[1]!,
@@ -78,17 +82,21 @@ describe("white-label: acento", () => {
 
 describe("white-label: acento en tema oscuro", () => {
   it("un acento pensado para fondo blanco se aclara hasta despegarse del fondo", () => {
-    // Azul profundo: sobre #101115 casi no se ve.
+    // Azul profundo: sobre el azul marino de la página casi no se ve.
     const oscuro = resolveAccentSet("#12305a", "dark");
-    expect(contrast("#12305a", DARK_BG)).toBeLessThan(3.5);
-    expect(contrast(oscuro.accent, DARK_BG)).toBeGreaterThanOrEqual(3.5);
+    expect(contrast("#12305a", DARK_BG)).toBeLessThan(3);
+    expect(contrast(oscuro.accent, DARK_BG)).toBeGreaterThanOrEqual(3);
   });
 
-  it("la tinta del botón sigue legible sobre el acento ya aclarado", () => {
+  it("la tinta del botón pasa AA sobre el acento ya aclarado", () => {
     for (const hex of ["#12305a", "#3f5972", "#ffee88", "#7a3b5e"]) {
       const s = resolveAccentSet(hex, "dark");
-      expect(contrast(s.fg, s.accent)).toBeGreaterThanOrEqual(3);
+      expect(contrast(s.fg, s.accent)).toBeGreaterThanOrEqual(4.5);
     }
+  });
+
+  it("el azul Vocero conserva la tinta blanca en oscuro", () => {
+    expect(resolveAccentSet(DEFAULT_BRANDING.accent, "dark").fg).toBe("#ffffff");
   });
 
   it("los presets NO se aplican tal cual: están calculados para fondo blanco", () => {
@@ -114,40 +122,55 @@ describe("white-label: acento en tema oscuro", () => {
   });
 
   it("el fondo de referencia del cálculo sigue al de globals.css", () => {
-    // DARK_BG vive duplicado en branding.ts porque el cálculo de contraste es
-    // JS y el token es CSS. Si alguien cambia el fondo oscuro y no el otro,
-    // los acentos se calculan contra un fondo que ya no existe: aquí se cae.
+    // DARK_BG y NAV_BG viven duplicados en branding.ts porque el cálculo de
+    // contraste es JS y el token es CSS. Si alguien cambia un fondo y no el
+    // otro, los acentos se calculan contra un fondo que ya no existe.
     const css = readFileSync("src/app/globals.css", "utf8");
-    const dark = css.slice(css.indexOf(':root[data-theme="dark"]'));
-    const bg = /--bg:\s*(#[0-9a-fA-F]{6})/.exec(dark)?.[1];
-    expect(bg?.toLowerCase()).toBe(DARK_BG);
+    const dark = variables(css, ':root[data-theme="dark"] {');
+    expect(dark["--bg"]?.toLowerCase()).toBe(DARK_BG);
+    expect(variables(css, ".nav-dark {")["--bg"]?.toLowerCase()).toBe(NAV_BG);
+    // …y el cálculo de verdad los usa: el relleno se despega de cada uno.
+    expect(contrast(resolveAccentSet("#12305a", "dark").accent, DARK_BG)).toBeGreaterThanOrEqual(3);
+    expect(contrast(resolveNavAccentSet("#12305a").accent, NAV_BG)).toBeGreaterThanOrEqual(3.5);
   });
 });
 
 describe("white-label: barra lateral bicolor (.nav-dark)", () => {
-  it("la barra lleva SIEMPRE el acento calculado para fondo oscuro", () => {
+  it("la barra lleva SIEMPRE el acento calculado contra su propio fondo", () => {
     // Es azul marino aunque la página esté en claro: con el acento del tema
     // claro, un color pensado para fondo blanco se hundiría en ella.
     const css = accentCssVariables("#3f5972");
     const nav = /\.nav-dark\{([^}]*)\}/.exec(css)?.[1] ?? "";
-    expect(nav).toContain(`--accent:${resolveAccentSet("#3f5972", "dark").accent};`);
-    expect(nav).toContain(`--accent-fg:${resolveAccentSet("#3f5972", "dark").fg};`);
+    expect(nav).toContain(`--accent:${resolveNavAccentSet("#3f5972").accent};`);
+    expect(nav).toContain(`--accent-fg:${resolveNavAccentSet("#3f5972").fg};`);
     expect(nav).not.toContain(resolveAccentSet("#3f5972", "light").accent);
   });
 
-  it("sus neutros son los del tema oscuro, uno por uno", () => {
-    // `.nav-dark` redeclara a mano los neutros del bloque oscuro. Si alguien
-    // retoca uno y no el otro, la barra se despega del resto del tema oscuro
-    // sin que nada truene: aquí se cae.
+  it("con el azul Vocero, la barra se ve como siempre", () => {
+    // La receta de la barra es la de antes: el ítem activo del tema claro no
+    // cambia aunque el tema oscuro de la página sí.
+    expect(resolveNavAccentSet(DEFAULT_BRANDING.accent)).toEqual({
+      accent: "#256bff",
+      hover: "#4883ff",
+      soft: "#122c63",
+      tint: "#0e1e41",
+      text: "#6295ff",
+      fg: "#ffffff",
+    });
+  });
+
+  it("sus neutros son SUYOS: no copian al tema oscuro de la página", () => {
+    // Antes `.nav-dark` repetía el bloque oscuro y barra y página quedaban a
+    // 1.04:1. Ahora la página va un escalón arriba; si alguien vuelve a
+    // igualarlas, el bicolor desaparece en oscuro: aquí se cae.
     const css = readFileSync("src/app/globals.css", "utf8");
     const oscuro = variables(css, ':root[data-theme="dark"] {');
     const nav = variables(css, ".nav-dark {");
     expect(Object.keys(nav)).toEqual(
       expect.arrayContaining(["--bg", "--bg-subtle", "--text", "--text-3", "--border"])
     );
-    for (const [nombre, valor] of Object.entries(nav)) {
-      expect(oscuro[nombre], nombre).toBe(valor);
-    }
+    expect(nav["--bg-subtle"]).not.toBe(oscuro["--bg-subtle"]);
+    expect(nav["--bg"]).not.toBe(oscuro["--bg"]);
   });
 });
 

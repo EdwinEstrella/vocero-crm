@@ -3,7 +3,7 @@ import { DEFAULT_CURRENCY, isCurrency, type Currency } from "@/lib/money";
 /**
  * White-label: nombre del CRM, acento y moneda por organización.
  * Presets sobrios del sistema Atlas; para un color personalizado se derivan
- * hover/soft/tint/text y se garantiza contraste con texto blanco.
+ * hover/soft/tint/text y la tinta encima (blanca o casi negra) pasa AA.
  */
 
 export type AccentSet = {
@@ -132,58 +132,115 @@ function contrast(a: Rgb, b: Rgb): number {
 }
 
 /** Fondo de referencia del tema oscuro (debe seguir a `--bg` de globals.css). */
-const DARK_BG: Rgb = { r: 0x0b, g: 0x13, b: 0x27 };
+const DARK_BG: Rgb = { r: 0x1c, g: 0x26, b: 0x3c };
+
+/**
+ * Fondo de referencia de la barra lateral (debe seguir a `--bg` de `.nav-dark`).
+ * La barra es azul marino fijo en los dos temas, así que su acento se calcula
+ * contra ella y no contra la página: si siguiera a DARK_BG, cambiar el tema
+ * oscuro repintaría también la barra del tema claro.
+ */
+const NAV_BG: Rgb = { r: 0x0b, g: 0x13, b: 0x27 };
+
+/** Tinta ENCIMA del acento: blanco solo si pasa AA (4.5:1), si no, casi negro. */
+const INK_ON_LIGHT = "#0f1419";
+const INK: Rgb = hexToRgb(INK_ON_LIGHT);
+function inkOn(base: Rgb): string {
+  return contrast(base, WHITE) >= 4.5 ? "#ffffff" : INK_ON_LIGHT;
+}
+/**
+ * ¿Alguna de las dos tintas pasa AA? En los tonos medios (blanco entre 4.1 y
+ * 4.5:1) ninguna llega, así que el relleno se sigue moviendo: se aclara en
+ * oscuro (hasta que la tinta casi negra pase) y se oscurece en claro.
+ */
+function inkPasses(base: Rgb): boolean {
+  return contrast(base, WHITE) >= 4.5 || contrast(base, INK) >= 4.5;
+}
+
+/**
+ * Receta de un acento sobre fondo oscuro. `minContrast` es el del relleno
+ * contra el fondo (botón, barra de selección: 3:1 basta para lo que no es
+ * texto; el acento como TEXTO usa `text`, ver --accent-ink); `soft`/`tint`
+ * son cuánto se hunden hacia el fondo, y `text` cuánto se aclara la tinta,
+ * que además se sube hasta 4.5:1 sobre el tint.
+ */
+type DarkRecipe = { bg: Rgb; minContrast: number; soft: number; tint: number; text: number };
+
+// Página oscura: con 3:1 el azul Vocero conserva la tinta blanca (4.5:1); el
+// tint más denso (0.78) hace que la fila seleccionada se vea sin leer el color
+// del texto (≥ 1.25:1 contra el fondo).
+const PAGE_DARK: DarkRecipe = { bg: DARK_BG, minContrast: 3, soft: 0.64, tint: 0.78, text: 0.34 };
+// Barra lateral: la receta de siempre, para que se vea igual que antes.
+const NAV_DARK: DarkRecipe = { bg: NAV_BG, minContrast: 3.5, soft: 0.72, tint: 0.88, text: 0.28 };
+
+function darkAccentSet(accentHex: string, r: DarkRecipe): AccentSet {
+  let base = hexToRgb(
+    isValidHex(accentHex) ? accentHex.toLowerCase() : DEFAULT_BRANDING.accent
+  );
+  while (
+    (contrast(base, r.bg) < r.minContrast || !inkPasses(base)) &&
+    luminance(base) < 0.95
+  ) {
+    base = mix(base, WHITE, 0.1);
+  }
+  const tint = mix(base, r.bg, r.tint);
+  let text = mix(base, WHITE, r.text);
+  while (contrast(text, tint) < 4.5 && luminance(text) < 0.95) {
+    text = mix(text, WHITE, 0.1);
+  }
+  return {
+    accent: rgbToHex(base),
+    hover: rgbToHex(mix(base, WHITE, 0.16)),
+    soft: rgbToHex(mix(base, r.bg, r.soft)),
+    tint: rgbToHex(tint),
+    text: rgbToHex(text),
+    fg: inkOn(base),
+  };
+}
 
 /**
  * Set completo para cualquier acento, según el tema.
  *
  * Claro: preset exacto si existe; si no se deriva mezclando hacia blanco, y un
- * base demasiado claro (texto blanco ilegible encima) se oscurece hasta
- * contraste ≥ 3:1 con blanco.
+ * base demasiado claro se oscurece hasta contraste ≥ 3:1 con el fondo blanco.
+ * La tinta encima es blanca solo si pasa AA; en un acento claro (un verde, un
+ * amarillo) va casi negra.
  *
  * Oscuro: los presets NO aplican — un acento pensado para fondo blanco se
- * hunde en el fondo oscuro. Se aclara hasta contraste ≥ 3.5:1 con el fondo y
- * las variantes soft/tint se mezclan hacia el fondo oscuro, no hacia blanco.
+ * hunde en el fondo oscuro. Se aclara hasta despegarse del fondo y las
+ * variantes soft/tint se mezclan hacia el fondo oscuro, no hacia blanco.
  */
 export function resolveAccentSet(
   accentHex: string,
   mode: ThemeMode = "light"
 ): AccentSet {
-  if (mode === "light") {
-    const preset = ACCENT_PRESETS[accentHex.toLowerCase()];
-    if (preset) return preset.set;
-    if (!isValidHex(accentHex)) return ACCENT_PRESETS[DEFAULT_BRANDING.accent]!.set;
+  if (mode === "dark") return darkAccentSet(accentHex, PAGE_DARK);
 
-    let base = hexToRgb(accentHex.toLowerCase());
-    // contraste con blanco = (1.05) / (L + 0.05); exigir ≥ 3
-    while (1.05 / (luminance(base) + 0.05) < 3 && luminance(base) > 0.005) {
-      base = mix(base, BLACK, 0.12);
-    }
-    return {
-      accent: rgbToHex(base),
-      hover: rgbToHex(mix(base, BLACK, 0.16)),
-      soft: rgbToHex(mix(base, WHITE, 0.82)),
-      tint: rgbToHex(mix(base, WHITE, 0.94)),
-      text: rgbToHex(mix(base, BLACK, 0.28)),
-      fg: "#ffffff",
-    };
+  const preset = ACCENT_PRESETS[accentHex.toLowerCase()];
+  if (preset) return preset.set;
+  if (!isValidHex(accentHex)) return ACCENT_PRESETS[DEFAULT_BRANDING.accent]!.set;
+
+  let base = hexToRgb(accentHex.toLowerCase());
+  // contraste con blanco = (1.05) / (L + 0.05); exigir ≥ 3
+  while (1.05 / (luminance(base) + 0.05) < 3 && luminance(base) > 0.005) {
+    base = mix(base, BLACK, 0.12);
   }
-
-  let base = hexToRgb(
-    isValidHex(accentHex) ? accentHex.toLowerCase() : DEFAULT_BRANDING.accent
-  );
-  while (contrast(base, DARK_BG) < 3.5 && luminance(base) < 0.95) {
-    base = mix(base, WHITE, 0.1);
+  while (!inkPasses(base) && luminance(base) > 0.005) {
+    base = mix(base, BLACK, 0.12);
   }
   return {
     accent: rgbToHex(base),
-    hover: rgbToHex(mix(base, WHITE, 0.16)),
-    soft: rgbToHex(mix(base, DARK_BG, 0.72)),
-    tint: rgbToHex(mix(base, DARK_BG, 0.88)),
-    text: rgbToHex(mix(base, WHITE, 0.28)),
-    // Sobre un acento ya aclarado, la tinta blanca deja de leerse.
-    fg: contrast(base, WHITE) >= 3 ? "#ffffff" : "#0f1419",
+    hover: rgbToHex(mix(base, BLACK, 0.16)),
+    soft: rgbToHex(mix(base, WHITE, 0.82)),
+    tint: rgbToHex(mix(base, WHITE, 0.94)),
+    text: rgbToHex(mix(base, BLACK, 0.28)),
+    fg: inkOn(base),
   };
+}
+
+/** El acento de la barra lateral azul marino (`.nav-dark`), en cualquier tema. */
+export function resolveNavAccentSet(accentHex: string): AccentSet {
+  return darkAccentSet(accentHex, NAV_DARK);
 }
 
 function accentBlock(selector: string, s: AccentSet): string {
@@ -199,12 +256,12 @@ function accentBlock(selector: string, s: AccentSet): string {
  * El selector va duplicado (`:root:root`) a propósito: así gana en
  * especificidad a los bloques de globals.css sin depender del orden de carga.
  *
- * El tercer bloque (`.nav-dark`) es el sidebar: siempre oscuro sin importar
- * `data-theme`, así que su acento se calcula SIEMPRE con el preset oscuro
- * (contraste contra `DARK_BG`), no con el que esté activo en el resto de la
- * página. Al declararse directamente sobre el `<aside>` (no sobre `:root`),
- * gana para ese elemento y sus hijos sin competir en especificidad con los
- * otros dos bloques, que solo tocan `<html>`.
+ * El tercer bloque (`.nav-dark`) es el sidebar: azul marino sin importar
+ * `data-theme`, así que su acento se calcula SIEMPRE contra su propio fondo
+ * (`NAV_BG`, ver `resolveNavAccentSet`), no con el que esté activo en el resto
+ * de la página. Al declararse directamente sobre el `<aside>` (no sobre
+ * `:root`), gana para ese elemento y sus hijos sin competir en especificidad
+ * con los otros dos bloques, que solo tocan `<html>`.
  */
 export function accentCssVariables(accentHex: string): string {
   return (
@@ -213,7 +270,7 @@ export function accentCssVariables(accentHex: string): string {
       ':root:root[data-theme="dark"]',
       resolveAccentSet(accentHex, "dark")
     ) +
-    accentBlock(".nav-dark", resolveAccentSet(accentHex, "dark"))
+    accentBlock(".nav-dark", resolveNavAccentSet(accentHex))
   );
 }
 

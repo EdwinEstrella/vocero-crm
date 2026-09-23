@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   AlertTriangle,
   CalendarDays,
+  ChartColumn,
   FlaskConical,
   Inbox,
   Kanban,
@@ -41,6 +42,9 @@ const NAV: NavItem[] = [
   { href: "/inbox", label: "Bandeja", icon: Inbox, badge: true },
   { href: "/pipeline", label: "Pipeline", icon: Kanban },
   { href: "/contacts", label: "Contactos", icon: Users },
+  // 019 — Después de Contactos: primero se atiende y se organiza, luego se
+  // mide. Antes de Agente y Laboratorio, que son configuración.
+  { href: "/results", label: "Resultados", icon: ChartColumn },
   { href: "/agent", label: "Agente", icon: Sparkles },
   { href: "/lab", label: "Laboratorio", icon: FlaskConical },
 ];
@@ -55,8 +59,9 @@ const AGENDA_ITEM: NavItem = {
 /**
  * Un renglón del menú, como el `side-item` del mockup de la landing: texto
  * semibold, esquinas de 9px y, activo, lavado del acento con tinta azul.
+ * Exportado para la vista previa de Configuración → Marca, que pinta la barra.
  */
-function navItemClass(active: boolean) {
+export function navItemClass(active: boolean) {
   return cn(
     "flex items-center gap-[10px] rounded-sm px-2.5 py-2.5 text-[13.5px] font-semibold transition-colors lg:py-2",
     // Acento sólido: dentro de `.nav-dark` es el calculado para fondo oscuro,

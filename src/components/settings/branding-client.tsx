@@ -2,21 +2,37 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Inbox } from "lucide-react";
 import {
   ACCENT_PRESETS,
   DEFAULT_BRANDING,
   isValidHex,
   resolveAccentSet,
+  resolveNavAccentSet,
+  type AccentSet,
   type Branding,
 } from "@/lib/branding";
 import { CURRENCIES, DEFAULT_CURRENCY, type Currency } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { useResolvedTheme } from "@/components/use-theme";
 import { BrandLogo } from "@/components/brand-mark";
+import { navItemClass } from "@/components/app-nav";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+
+/** Los tokens del acento, para sobreescribirlos SOLO dentro de una caja. */
+function accentVars(s: AccentSet): React.CSSProperties {
+  return {
+    "--accent": s.accent,
+    "--accent-hover": s.hover,
+    "--accent-soft": s.soft,
+    "--accent-tint": s.tint,
+    "--accent-text": s.text,
+    "--accent-fg": s.fg,
+  } as React.CSSProperties;
+}
 
 export function BrandingClient({
   favicon = null,
@@ -56,8 +72,10 @@ export function BrandingClient({
 
   const isPreset = accent.toLowerCase() in ACCENT_PRESETS;
   // La vista previa muestra el acento tal como se verá en el tema activo: los
-  // presets están pensados para fondo claro y en oscuro se aclaran.
+  // presets están pensados para fondo claro y en oscuro se aclaran. La barra
+  // lateral es azul marino en los dos temas y lleva su propio cálculo.
   const previewSet = resolveAccentSet(accent, mode);
+  const navSet = resolveNavAccentSet(accent);
 
   async function save() {
     setSaving(true);
@@ -170,31 +188,33 @@ export function BrandingClient({
             </p>
           </div>
 
-          {/* Vista previa. Los tokens del acento se sobreescriben SOLO dentro
-              de esta caja, así la marca y el botón se pintan con el color que
-              se está eligiendo (aún sin guardar) y con los mismos componentes
-              que la barra lateral real. */}
+          {/* Vista previa: el bicolor real en miniatura, con el color que se
+              está eligiendo (aún sin guardar). A la izquierda la barra, con la
+              misma clase (`nav-dark`) y el mismo renglón activo que la de
+              verdad; a la derecha la página en el tema activo, con su botón. */}
           <div
-            className="rounded-md border border-border-strong bg-brand-tint p-4"
-            style={
-              {
-                "--accent": previewSet.accent,
-                "--accent-hover": previewSet.hover,
-                "--accent-soft": previewSet.soft,
-                "--accent-tint": previewSet.tint,
-                "--accent-text": previewSet.text,
-                "--accent-fg": previewSet.fg,
-              } as React.CSSProperties
-            }
+            aria-label="Vista previa de la marca"
+            className="flex flex-col overflow-hidden rounded-md border border-border-strong sm:flex-row"
           >
-            <div className="flex items-center gap-2.5">
-              <div className="min-w-0">
+            <div
+              className="nav-dark shrink-0 bg-subtle p-3 text-foreground sm:w-60"
+              style={accentVars(navSet)}
+            >
+              <div className="px-2 pt-0.5">
                 <BrandLogo
                   branding={{ name: name.trim() || DEFAULT_BRANDING.name, accent, favicon }}
                 />
-                <span className="kicker mt-1.5 block">CRM · WhatsApp</span>
+                <span className="kicker mt-2 block">CRM · WhatsApp</span>
               </div>
-              <span className="flex-1" />
+              <span className={cn(navItemClass(true), "mt-3")}>
+                <Inbox className="h-[17px] w-[17px] text-brand" strokeWidth={1.8} />
+                <span className="flex-1">Bandeja</span>
+              </span>
+            </div>
+            <div
+              className="flex flex-1 items-center justify-center border-t border-border-strong bg-background p-4 sm:border-l sm:border-t-0"
+              style={accentVars(previewSet)}
+            >
               <span className="rounded-full bg-brand px-3.5 py-1.5 text-xs font-semibold text-brand-fg shadow-sm">
                 Botón de ejemplo
               </span>

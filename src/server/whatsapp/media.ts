@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
@@ -116,6 +116,18 @@ export async function readMediaFile(
   assetId: string
 ): Promise<Buffer> {
   return readFile(mediaFilePath(organizationId, assetId));
+}
+
+/**
+ * 018 — Borra el archivo de un asset. Sin error si ya no estaba: quien lo
+ * llama está deshaciendo una copia que sobró, y un archivo que no existe es
+ * justo el estado al que quiere llegar.
+ */
+export async function deleteMediaFile(
+  organizationId: string,
+  assetId: string
+): Promise<void> {
+  await rm(mediaFilePath(organizationId, assetId), { force: true });
 }
 
 /* ---------- Descarga desde Graph (entrantes y echoes) ---------- */

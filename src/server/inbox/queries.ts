@@ -4,6 +4,40 @@ import { scoped } from "@/lib/db/tenant";
 import { isWindowOpen, windowRemainingMs } from "@/server/inbox/window";
 import type { ConversationDto } from "@/lib/types";
 
+/**
+ * 018 — El anuncio de origen viaja con la conversación. La llave única
+ * (organización, conversación) garantiza a lo más una fila por renglón, así
+ * que el LEFT JOIN no multiplica la lista.
+ */
+const anuncioDeLaConversacion = and(
+  eq(schema.adAttribution.organizationId, schema.conversation.organizationId),
+  eq(schema.adAttribution.conversationId, schema.conversation.id)
+);
+
+const anuncioDeLista = {
+  id: schema.adAttribution.id,
+  headline: schema.adAttribution.headline,
+  sourceId: schema.adAttribution.sourceId,
+  sourceType: schema.adAttribution.sourceType,
+};
+
+function aAnuncioDeLista(
+  fila: {
+    id: string | null;
+    headline: string | null;
+    sourceId: string | null;
+    sourceType: string | null;
+  } | null
+): ConversationDto["anuncio"] {
+  // Sin fila, drizzle devuelve el objeto con todo en null (o null a secas).
+  if (!fila?.id) return null;
+  return {
+    headline: fila.headline,
+    sourceId: fila.sourceId,
+    sourceType: fila.sourceType,
+  };
+}
+
 export async function listConversations(
   organizationId: string,
   since?: Date
@@ -29,12 +63,14 @@ export async function listConversations(
       contact: schema.contact,
       preview: previewSql,
       stageName: stageSql,
+      anuncio: anuncioDeLista,
     })
     .from(schema.conversation)
     .innerJoin(
       schema.contact,
       eq(schema.conversation.contactId, schema.contact.id)
     )
+    .leftJoin(schema.adAttribution, anuncioDeLaConversacion)
     .where(
       scoped(
         schema.conversation.organizationId,
@@ -46,7 +82,13 @@ export async function listConversations(
     .orderBy(desc(sql`coalesce(${schema.conversation.lastMessageAt}, ${schema.conversation.createdAt})`));
 
   return rows.map((r) =>
-    serializeConversation(r.conversation, r.contact, r.preview, r.stageName)
+    serializeConversation(
+      r.conversation,
+      r.contact,
+      r.preview,
+      r.stageName,
+      aAnuncioDeLista(r.anuncio)
+    )
   );
 }
 
@@ -56,12 +98,17 @@ export async function getConversation(
 ) {
   const db = getDb();
   const rows = await db
-    .select({ conversation: schema.conversation, contact: schema.contact })
+    .select({
+      conversation: schema.conversation,
+      contact: schema.contact,
+      anuncio: anuncioDeLista,
+    })
     .from(schema.conversation)
     .innerJoin(
       schema.contact,
       eq(schema.conversation.contactId, schema.contact.id)
     )
+    .leftJoin(schema.adAttribution, anuncioDeLaConversacion)
     .where(
       scoped(
         schema.conversation.organizationId,
@@ -70,7 +117,8 @@ export async function getConversation(
       )
     )
     .limit(1);
-  return rows[0] ?? null;
+  const row = rows[0];
+  return row ? { ...row, anuncio: aAnuncioDeLista(row.anuncio) } : null;
 }
 
 export async function listMessages(
@@ -101,7 +149,8 @@ export function serializeConversation(
   c: typeof schema.conversation.$inferSelect,
   contact: typeof schema.contact.$inferSelect,
   preview: string | null = null,
-  stageName: string | null = null
+  stageName: string | null = null,
+  anuncio: ConversationDto["anuncio"] = null
 ): ConversationDto {
   return {
     id: c.id,
@@ -117,6 +166,7 @@ export function serializeConversation(
     windowOpen: isWindowOpen(c.lastInboundAt),
     windowRemainingMs: windowRemainingMs(c.lastInboundAt),
     preview,
+    anuncio,
   };
 }
 

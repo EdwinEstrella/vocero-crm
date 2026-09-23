@@ -629,6 +629,33 @@ async function main() {
   });
   ok("texto vacío → 422 (no se manda un mensaje en blanco)", sendVacio.res.status === 422);
 
+  // Regresión: la hora del saliente debe ser la misma en las dos vistas.
+  // Las columnas son `timestamp without time zone` y se llenan por dos caminos
+  // — `now()` de los `defaultNow()` (marco de la SESIÓN de BD) y `Date` desde
+  // JS (marco UTC, lo que Drizzle lee de vuelta). Si la sesión no está en UTC,
+  // `message.created_at` (burbuja del hilo) se desfasa de
+  // `conversation.last_message_at` (lista) por el offset del servidor de BD.
+  console.log("\n== zona horaria: la misma hora en la lista y en el hilo ==");
+  const convTz = ((await api("/api/conversations")).json?.conversations ?? [])
+    .find((c) => c.id === convId);
+  const minutos = (a, b) => Math.abs(Date.parse(a) - Date.parse(b)) / 60000;
+  ok(
+    "el saliente trae la misma hora en el hilo y en la lista",
+    convTz?.lastMessageAt !== undefined &&
+      botMsg?.createdAt !== undefined &&
+      minutos(convTz.lastMessageAt, botMsg.createdAt) < 5,
+    JSON.stringify({
+      hilo: botMsg?.createdAt,
+      lista: convTz?.lastMessageAt,
+    })
+  );
+  ok(
+    "y esa hora es la de ahora, no la del huso del servidor de BD",
+    botMsg?.createdAt !== undefined &&
+      minutos(new Date().toISOString(), botMsg.createdAt) < 5,
+    JSON.stringify({ hilo: botMsg?.createdAt, ahora: new Date().toISOString() })
+  );
+
   console.log("\n== us-bot-api: el bot pide un humano ==");
   const hoNoKey = await api("/api/bot/handoff", {
     method: "POST",
@@ -808,6 +835,8 @@ async function main() {
     !detail?.lead || detail?.stage?.id === firstStage?.id,
     `etapa=${detail?.stage?.name} esperada=${firstStage?.name}`
   );
+
+  await quienRespondeChecks(convId);
 
   console.log("\n== FR-022: pedir un humano no deja al cliente en silencio ==");
   {
@@ -1199,9 +1228,222 @@ async function main() {
 
   await agendaChecks();
   await atribucionChecks();
+  await anuncioDeOrigenChecks();
+  await r11BotChecks();
 
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
+}
+
+/* ============================================================
+ * «Quién responde a tus clientes» (tests/e2e/us-bot-api.md, pasos 40-44)
+ *
+ * El agente incluido y un cerebro externo (Nea) no se ven entre sí: con los
+ * dos activos, el cliente recibe dos respuestas. La tarjeta del Agente lo
+ * dice con dos señales: la última llamada autenticada a /api/bot/* (en
+ * memoria) y el /health de Nea si hay BRAIN_HEALTH_URL. Aquí se levanta una
+ * Nea FALSA en el puerto de esa URL (tiene que ser local) — la app ya corre
+ * con ella en su .env — y se la pone sana y después colgada.
+ * ============================================================ */
+
+/** Una Nea de mentira: responde su /health como la Nea de verdad. */
+async function levantarNeaFalsa(url) {
+  const { createServer } = await import("node:http");
+  const estado = { modo: "sana", pedidos: 0, ultimaAuth: null, ultimaRuta: null };
+  const server = createServer((req, res) => {
+    if ((req.url ?? "").split("?")[0] !== url.pathname) {
+      res.writeHead(404);
+      return res.end();
+    }
+    estado.pedidos++;
+    estado.ultimaAuth = req.headers.authorization ?? null;
+    estado.ultimaRuta = req.url;
+    if (estado.modo === "colgada") return; // nunca contesta
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        status: "ok",
+        db: "ok",
+        version: "1.0.0",
+        commit: "abc1234",
+        commitVerified: true,
+        mode: "estándar",
+        relay: { pendientes: 0, masViejoSegundos: null, ultimoErrorEn: null },
+      })
+    );
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(Number(url.port || 80), url.hostname.replace(/^\[|\]$/g, ""), resolve);
+  });
+  return {
+    estado,
+    cerrar: () =>
+      new Promise((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+async function quienRespondeChecks(convId) {
+  console.log("\n== quién responde: la tarjeta del Agente ==");
+  const estado = async () => (await api("/api/agent/brain-status")).json;
+
+  const raw = process.env.BRAIN_HEALTH_URL;
+  const url = raw ? new URL(raw) : null;
+  const local = url && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  if (url && !local) {
+    console.log(`  SKIP /health: BRAIN_HEALTH_URL apunta a ${url.host}, no a esta máquina`);
+  }
+  // Antes de la primera consulta: así la caché de 15 s no guarda un «no está
+  // en línea» de antes de que la Nea falsa existiera.
+  const nea = local ? await levantarNeaFalsa(url) : null;
+  const perfil = (await api("/api/agent/profile")).json;
+  const enabledOriginal = perfil?.profile?.enabled === true;
+  try {
+    await quienResponde(convId, estado, url, nea);
+  } finally {
+    await nea?.cerrar();
+    await api("/api/agent/profile", {
+      method: "PUT",
+      body: JSON.stringify({ enabled: enabledOriginal }),
+    });
+  }
+}
+
+async function quienResponde(convId, estado, url, nea) {
+  const anon = await fetch(`${BASE}/api/agent/brain-status`);
+  ok("brain-status sin sesión → 401", anon.status === 401);
+
+  const antes = await estado();
+  ok(
+    "brain-status con sesión → las dos filas y el aviso",
+    typeof antes?.embedded?.answering === "boolean" &&
+      typeof antes?.external?.active === "boolean" &&
+      "warning" in (antes ?? {}),
+    JSON.stringify(antes)
+  );
+  ok("la llave del cerebro externo cuenta como configurada", antes?.external?.keyConfigured === true);
+
+  // La última llamada: solo la mueve una llamada AUTENTICADA.
+  await sleep(1100);
+  await api("/api/bot/profile", { headers: { "x-api-key": "x".repeat(BOT_KEY.length) } });
+  const trasMala = await estado();
+  ok(
+    "una llamada con key equivocada NO cuenta como «visto»",
+    trasMala?.external?.lastSeenAt === antes?.external?.lastSeenAt,
+    `${antes?.external?.lastSeenAt} → ${trasMala?.external?.lastSeenAt}`
+  );
+  const ctx = await bot(`/api/bot/context?conversationId=${convId}`);
+  ok("GET /api/bot/context con la key → 200", ctx.res.ok);
+  const despues = await estado();
+  const tAntes = Date.parse(antes?.external?.lastSeenAt ?? "") || 0;
+  const tDespues = Date.parse(despues?.external?.lastSeenAt ?? "") || 0;
+  ok(
+    "…y lastSeenAt avanza",
+    tDespues > tAntes && Date.now() - tDespues < 30_000,
+    `${antes?.external?.lastSeenAt} → ${despues?.external?.lastSeenAt}`
+  );
+  ok("…y el cerebro externo cuenta como activo", despues?.external?.active === true);
+
+  if (!url) {
+    ok("sin BRAIN_HEALTH_URL no se le pregunta a nadie (health: null)", despues?.external?.health === null);
+    console.log(
+      "  (para probar el /health: BRAIN_HEALTH_URL=http://127.0.0.1:<puerto>/health en .env y reinicia la app)"
+    );
+  }
+
+  if (nea) {
+    // Una corrida anterior pudo dejar en caché a su Nea colgada (15 s).
+    let h = null;
+    const enLinea = await hasta(async () => {
+      h = (await estado())?.external?.health ?? null;
+      return h?.reachable === true;
+    }, 25_000, 1000);
+    ok("con la Nea falsa sana: en línea", enLinea, JSON.stringify(h));
+    ok(
+      "…con versión, modo y cola del relevo",
+      h?.version === "1.0.0" && h?.mode === "estándar" && h?.relay?.pendientes === 0,
+      JSON.stringify(h)
+    );
+    ok("…y solo el host de la URL", h?.host === url.host, h?.host);
+    const dump = JSON.stringify(await estado());
+    const secretos = [url.username, url.password, url.search.slice(1)].filter(Boolean);
+    ok(
+      "credenciales y query de BRAIN_HEALTH_URL no salen en la respuesta",
+      secretos.every((s) => !dump.includes(decodeURIComponent(s))),
+      `revisados ${secretos.length}`
+    );
+    if (url.username || url.password) {
+      ok(
+        "…pero sí viajan a Nea (Authorization: Basic)",
+        nea.estado.ultimaAuth ===
+          `Basic ${Buffer.from(`${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`).toString("base64")}`
+      );
+    }
+    const pedidosAntes = nea.estado.pedidos;
+    await Promise.all([estado(), estado(), estado()]);
+    ok(
+      "tres consultas seguidas no martillan a Nea (caché)",
+      nea.estado.pedidos === pedidosAntes,
+      `${pedidosAntes} → ${nea.estado.pedidos}`
+    );
+  }
+
+  // Los dos contestando: el aviso rojo.
+  const on = await api("/api/agent/profile", {
+    method: "PUT",
+    body: JSON.stringify({ enabled: true }),
+  });
+  ok("agente incluido encendido desde la pantalla", on.res.ok);
+  const doble = await estado();
+  ok(
+    "con token de IA + agente encendido + cerebro externo activo → doble_respuesta",
+    doble?.embedded?.configured === true &&
+      doble?.embedded?.answering === true &&
+      doble?.warning === "doble_respuesta",
+    JSON.stringify({ embedded: doble?.embedded, warning: doble?.warning })
+  );
+  await api("/api/agent/profile", {
+    method: "PUT",
+    body: JSON.stringify({ enabled: false }),
+  });
+  const solo = await estado();
+  ok(
+    "apagar el agente incluido quita el aviso (contesta solo el externo)",
+    solo?.embedded?.answering === false && solo?.warning === null,
+    JSON.stringify({ embedded: solo?.embedded, warning: solo?.warning })
+  );
+
+  if (nea) {
+    // Nea colgada: la tarjeta se entera sin quedarse esperando.
+    nea.estado.modo = "colgada";
+    let h = null;
+    let masLenta = 0;
+    const caida = await hasta(async () => {
+      const t0 = Date.now();
+      h = (await estado())?.external?.health ?? null;
+      masLenta = Math.max(masLenta, Date.now() - t0);
+      return h?.reachable === false;
+    }, 25_000, 1000);
+    ok(
+      "con Nea colgada: no está en línea, por tiempo agotado",
+      caida && h?.problem === "timeout",
+      JSON.stringify(h)
+    );
+    ok(
+      "…y la consulta no se cuelga con ella (≤ 4 s)",
+      masLenta <= 4000,
+      `${masLenta} ms`
+    );
+    const sigue = await estado();
+    ok(
+      "…la llamada reciente la sigue contando como activa",
+      sigue?.external?.active === true,
+      JSON.stringify(sigue?.external)
+    );
+  }
 }
 
 /* ============================================================
@@ -1877,6 +2119,8 @@ async function agendaChecks() {
     });
   }
 
+  await huecosPorFechaChecks();
+
   // El sandbox del Laboratorio (una cita de prueba jamás llega a un conector)
   // NO se verifica aquí: las conversaciones del Laboratorio no son alcanzables
   // desde la API pública —a propósito—, así que desde fuera solo podría
@@ -1884,6 +2128,138 @@ async function agendaChecks() {
   // `tests/unit/agenda-sandbox.test.ts`, que afirma lo que de verdad importa:
   // que el conector no se llama, ni al crear, ni al reprogramar, ni al
   // cancelar.
+}
+
+/* ============================================================
+ * R10 — Huecos por fecha (tests/e2e/us-agenda.md, US3b)
+ *
+ * El fallo que lo motivó, en la prueba de punta a punta raíz + Nea: a
+ * «¿tienen algo mañana en la tarde?» el cerebro solo recibía las tres
+ * primeras horas de mañana y contestó que solo había mañana. Aquí se pide el
+ * día con `date`, se reserva una hora de la TARDE y se comprueba que el
+ * reparto sin `date` conserva su forma. Corre al final de 015 con un lead
+ * propio: no toca la oferta de los demás.
+ * ============================================================ */
+async function huecosPorFechaChecks() {
+  console.log("\n== R10: huecos por fecha (la tarde de mañana) ==");
+  const tz = (await api("/api/calendar/settings")).json?.settings?.timezone;
+  const diaEn = (offsetDias) => {
+    const hoy = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    return new Date(Date.parse(`${hoy}T00:00:00Z`) + offsetDias * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+  };
+  const manana = diaEn(1);
+
+  const SUF = Date.now().toString().slice(-6);
+  await api("/api/dev/wa-mock/inbound", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: PN,
+      from: `5214629${SUF}`,
+      name: "Lead R10 tarde",
+      // Sin palabras que disparen al agente incluido a ofrecer o reservar.
+      text: "¿tienen algo mañana en la tarde?",
+      waMessageId: `wamid.e2e.r10.${SUF}.1`,
+    }),
+  });
+  let conv = null;
+  await hasta(async () => {
+    const cs = (await api("/api/conversations")).json?.conversations ?? [];
+    conv = cs.find((c) => c.contact.phone === `524629${SUF}`) ?? null;
+    return Boolean(conv);
+  });
+  ok("conversación del lead que pide la tarde", Boolean(conv));
+  if (!conv) return;
+  const q = `/api/bot/availability?conversationId=${conv.id}&limit=12&perDay=3&days=5`;
+
+  // Sin date: la forma de siempre (+ query), y el porqué del fallo a la vista.
+  const reparto = await bot(q);
+  const rSlots = reparto.json?.slots ?? [];
+  ok(
+    "sin date: la misma forma (slots + diasConAgenda) y ahora query",
+    reparto.res.status === 200 &&
+      Array.isArray(reparto.json?.diasConAgenda) &&
+      rSlots.length > 0 &&
+      ["startUtc", "endUtc", "label", "dayIso", "dayLabel", "time"].every(
+        (k) => k in rSlots[0]
+      ),
+    `status=${reparto.res.status} keys=${Object.keys(reparto.json ?? {})}`
+  );
+  ok(
+    "sin date: query dice que es un reparto y hasta dónde revisó",
+    reparto.json?.query?.date === null &&
+      reparto.json?.query?.perDay === 3 &&
+      /^\d{4}-\d{2}-\d{2}$/.test(reparto.json?.query?.coveredUntil ?? "") &&
+      /^\d{4}-\d{2}-\d{2}$/.test(reparto.json?.query?.horizonEnd ?? ""),
+    JSON.stringify(reparto.json?.query)
+  );
+
+  // Con date: TODO mañana, tarde incluida.
+  const delDia = await bot(`${q}&date=${manana}`);
+  const dSlots = delDia.json?.slots ?? [];
+  ok(
+    "con date: 200 con query.date = el día pedido y status available",
+    delDia.res.status === 200 &&
+      delDia.json?.query?.date === manana &&
+      delDia.json?.query?.status === "available",
+    `status=${delDia.res.status} query=${JSON.stringify(delDia.json?.query)}`
+  );
+  ok(
+    "con date: solo horas de ese día, más de las 3 del reparto",
+    dSlots.length > 3 && dSlots.every((s) => s.dayIso === manana),
+    `n=${dSlots.length}`
+  );
+  const tarde = dSlots.find((s) => s.time >= "15:00");
+  ok(
+    "con date: trae la TARDE (lo que el reparto no enseñaba)",
+    Boolean(tarde),
+    JSON.stringify(dSlots.map((s) => s.time))
+  );
+
+  // Consultas que no encuentran nada NO borran la oferta vigente.
+  const lejos = diaEn(8);
+  const fuera = await bot(`${q}&date=${lejos}`);
+  ok(
+    "un día más allá del horizonte → beyond_horizon, sin horas",
+    fuera.res.status === 200 &&
+      fuera.json?.query?.status === "beyond_horizon" &&
+      (fuera.json?.slots ?? []).length === 0,
+    `status=${fuera.res.status} query=${JSON.stringify(fuera.json?.query)}`
+  );
+  const mala = await bot(`${q}&date=2026-02-31`);
+  ok(
+    "una fecha inexistente → 422 invalid_body (no 500)",
+    mala.res.status === 422 && mala.json?.error?.code === "invalid_body",
+    `status=${mala.res.status}`
+  );
+
+  if (!tarde) return;
+  const reserva = await bot("/api/bot/bookings", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: conv.id, startUtc: tarde.startUtc }),
+  });
+  ok(
+    "reservar una hora de la tarde ofrecida por fecha → 201",
+    reserva.res.status === 201 && Boolean(reserva.json?.bookingId),
+    `status=${reserva.res.status} body=${JSON.stringify(reserva.json)}`
+  );
+  ok(
+    "la cita queda a la hora de la tarde elegida",
+    typeof reserva.json?.label === "string" && reserva.json.label.includes(tarde.time),
+    JSON.stringify(reserva.json?.label)
+  );
+  const otraVez = await bot(`${q}&date=${manana}`);
+  ok(
+    "la hora reservada ya no se ofrece para ese día",
+    !(otraVez.json?.slots ?? []).some((s) => s.startUtc === tarde.startUtc),
+    `n=${(otraVez.json?.slots ?? []).length}`
+  );
 }
 
 main().catch((err) => {
@@ -1954,11 +2330,31 @@ async function atribucionChecks() {
       }),
     });
     ok("inbound con anuncio entregado igual", inb.res.ok);
-    await sleep(1400);
-    const convsOff = (await api("/api/conversations")).json?.conversations ?? [];
+    // Con `preview` ya entró el mensaje, y el anuncio se guarda antes que él.
+    let convOff = null;
+    await hasta(async () => {
+      const convs = (await api("/api/conversations")).json?.conversations ?? [];
+      convOff = convs.find(
+        (c) => c.contact.name === nom("Lead con anuncio apagada") && c.preview != null
+      );
+      return !!convOff;
+    });
+    ok("la conversación del anuncio existe (la ingesta no se rompe)", !!convOff);
+    // 018 — La bandera ya no esconde DE QUÉ anuncio llegó: eso se ve siempre.
+    // Lo que apaga es el identificador de clic, que ni se guarda.
     ok(
-      "la conversación del anuncio existe (la ingesta no se rompe)",
-      convsOff.some((c) => c.contact.name === nom("Lead con anuncio apagada"))
+      "el origen del anuncio se ve igual con la bandera apagada (018)",
+      convOff?.anuncio?.headline === "Anuncio de prueba",
+      JSON.stringify(convOff?.anuncio)
+    );
+    const detalleOff = convOff
+      ? (await api(`/api/contacts/${convOff.contact.id}`)).json
+      : null;
+    ok(
+      "pero sin identificador de clic: hasCtwaClid es false y el valor no aparece",
+      detalleOff?.anuncio?.hasCtwaClid === false &&
+        !JSON.stringify(detalleOff).includes("clid-apagada"),
+      JSON.stringify(detalleOff?.anuncio)
     );
     console.log(
       "  (atribución apagada: el resto de los checks de 016 no aplican)"
@@ -2261,4 +2657,417 @@ async function atribucionChecks() {
     act7.length >= 3,
     `${act7.length} filas`
   );
+}
+
+/* ============================================================
+ * 018 — De qué anuncio llegó cada conversación (tests/e2e/us-atribucion.md)
+ *
+ * Corre con la bandera ATRIBUCION apagada Y encendida: el origen del anuncio
+ * se ve siempre, y lo único que cambia es si Meta identificó el clic. Puerto
+ * de las secciones 1-4b del guion de la spec 212 de Vocero Cloud, sin las
+ * comprobaciones entre organizaciones (aquí hay una).
+ *
+ * Los creativos los sirve el wa-mock (`/api/dev/wa-mock/media-file/creativo-*`),
+ * en el origen de META_GRAPH_BASE_URL: el único que la copia acepta fuera de
+ * los hosts de Meta, y solo con los mocks habilitados.
+ * ============================================================ */
+
+async function anuncioDeOrigenChecks() {
+  const atribuye = /^(on|1|true|si|sí|yes)$/i.test(
+    (process.env.ATRIBUCION ?? "").trim()
+  );
+  const RUN = String(Date.now()).slice(-6);
+  const tel = (n) => `52156${RUN}${String(n).padStart(2, "0")}`;
+  const nombre = (n) => `Anuncio ${RUN} ${n}`;
+  let origenMock = BASE;
+  try {
+    origenMock = new URL(process.env.META_GRAPH_BASE_URL).origin;
+  } catch {
+    /* sin META_GRAPH_BASE_URL: el propio BASE */
+  }
+  const creativo = (id) => `${origenMock}/api/dev/wa-mock/media-file/${id}`;
+  const referralCtwa = ({ id, titular, imagen, tipo = "ad" }) => ({
+    source_url: `https://fb.me/anuncio-${RUN}-${id}`,
+    source_id: `1202${RUN}${id}`,
+    source_type: tipo,
+    headline: titular,
+    body: `Texto del anuncio ${id}`,
+    media_type: "image",
+    image_url: imagen,
+    ctwa_clid: `clid-018-${RUN}-${id}`,
+  });
+  const entra = (n, texto, referral, waMessageId = `wamid.e2e.018.${RUN}.${n}`) =>
+    api("/api/dev/wa-mock/inbound", {
+      method: "POST",
+      body: JSON.stringify({
+        phoneNumberId: PN,
+        from: tel(n),
+        name: nombre(n),
+        text: texto,
+        waMessageId,
+        ...(referral ? { referral } : {}),
+      }),
+    });
+  // El webhook procesa en `after()`: la conversación existe un instante antes
+  // que su anuncio y su mensaje. Con `preview` ya hay mensaje, y el anuncio se
+  // guarda ANTES que el mensaje: a partir de ahí lo que diga la lista es final.
+  const conversacionDe = async (n) => {
+    let hallada = null;
+    await hasta(async () => {
+      const convs = (await api("/api/conversations")).json?.conversations ?? [];
+      hallada =
+        convs.find((c) => c.contact.name === nombre(n) && c.preview != null) ?? null;
+      return !!hallada;
+    });
+    return hallada;
+  };
+  const detalle = async (contactId) =>
+    (await api(`/api/contacts/${contactId}`)).json;
+  const imagenDe = async (contactId, ms = 15000) => {
+    let id = null;
+    await hasta(async () => {
+      id = (await detalle(contactId))?.anuncio?.imageAssetId ?? null;
+      return !!id;
+    }, ms);
+    return id;
+  };
+
+  console.log(
+    `\n== 018: de qué anuncio llegó (ATRIBUCION ${atribuye ? "encendida" : "apagada"}) ==`
+  );
+  // En `next dev` una ruta se compila en su primera petición y eso puede tardar
+  // más que la espera de la copia: se calientan antes de medir.
+  await fetch(creativo("creativo-calentamiento")).catch(() => null);
+  await api("/api/media/calentamiento").catch(() => null);
+
+  /* ---------- 1 · el primer mensaje trae su anuncio ---------- */
+  const R1 = referralCtwa({ id: 1, titular: `Diagnóstico gratis ${RUN}`, imagen: creativo(`creativo-azul-${RUN}`) });
+  const R2 = referralCtwa({ id: 2, titular: `Segundo anuncio ${RUN}`, imagen: creativo(`creativo-rojo-${RUN}`) });
+  const inb1 = await entra(1, `Hola, vi su anuncio ${RUN}`, R1);
+  ok("el webhook acepta el mensaje con referral", inb1.res.ok, `status=${inb1.res.status}`);
+  const conv1 = await conversacionDe(1);
+  ok(
+    "la lista trae el anuncio con su titular",
+    conv1?.anuncio?.headline === R1.headline &&
+      conv1?.anuncio?.sourceId === R1.source_id &&
+      conv1?.anuncio?.sourceType === "ad",
+    JSON.stringify(conv1?.anuncio)
+  );
+  const d1 = conv1 ? await detalle(conv1.contact.id) : null;
+  const an = d1?.anuncio;
+  ok(
+    "el detalle del contacto trae el anuncio completo",
+    an?.sourceId === R1.source_id && an?.sourceType === "ad" &&
+      an?.sourceUrl === R1.source_url && an?.body === R1.body &&
+      an?.mediaType === "image" && !!an?.capturedAt,
+    JSON.stringify(an)
+  );
+  ok(
+    atribuye
+      ? "con la bandera encendida, Meta identificó el clic (hasCtwaClid)"
+      : "con la bandera apagada, no hay clic que identificar (hasCtwaClid false)",
+    an?.hasCtwaClid === atribuye,
+    JSON.stringify(an)
+  );
+  const lista1 = (await api("/api/conversations")).json;
+  ok(
+    "el ctwa_clid no sale por la API",
+    !JSON.stringify(d1 ?? {}).includes(R1.ctwa_clid) &&
+      !JSON.stringify(lista1 ?? {}).includes(R1.ctwa_clid),
+    "¡la respuesta traía el identificador de clic!"
+  );
+  ok(
+    "la fuente sin capturar se deduce «anuncio»",
+    d1?.contact?.source?.value === "anuncio" &&
+      d1?.contact?.source?.source === "deducida",
+    JSON.stringify(d1?.contact?.source)
+  );
+  const imagenR1 = conv1 ? await imagenDe(conv1.contact.id) : null;
+  ok("la imagen del creativo queda guardada", !!imagenR1, "imageAssetId siguió en null");
+  if (imagenR1) {
+    const media = await fetch(`${BASE}/api/media/${imagenR1}`, { headers: { cookie } });
+    const bytes = Buffer.from(await media.arrayBuffer());
+    ok(
+      "y se sirve como PNG con sesión",
+      media.status === 200 &&
+        media.headers.get("content-type") === "image/png" &&
+        bytes.subarray(1, 4).toString() === "PNG",
+      `status ${media.status}, tipo ${media.headers.get("content-type")}, ${bytes.length} bytes`
+    );
+    const sinSesion = await fetch(`${BASE}/api/media/${imagenR1}`);
+    ok("sin sesión no se sirve", sinSesion.status === 401, `status=${sinSesion.status}`);
+  }
+
+  /* ---------- 2 · el primer anuncio gana y nada se duplica ---------- */
+  const entrantes = async () =>
+    conv1
+      ? ((await api(`/api/conversations/${conv1.id}/messages`)).json?.messages ?? [])
+          .filter((m) => m.direction === "in").length
+      : -1;
+  const antes = await entrantes();
+  // Reentrega exacta del primer mensaje, como hace Meta, y un segundo mensaje
+  // de la misma persona desde OTRO anuncio.
+  await entra(1, `Hola, vi su anuncio ${RUN}`, R1);
+  await entra(1, `Vi otro anuncio ${RUN}`, R2, `wamid.e2e.018.${RUN}.1b`);
+  await hasta(async () => (await entrantes()) >= antes + 1);
+  await sleep(600); // por si la reentrega llegara a colarse después
+  const despues = await entrantes();
+  const conv1b = await conversacionDe(1);
+  ok(
+    "el segundo mensaje entra en la misma conversación y el anuncio sigue siendo el primero",
+    conv1b?.id === conv1?.id && conv1b?.anuncio?.sourceId === R1.source_id,
+    JSON.stringify({ id: conv1b?.id, anuncio: conv1b?.anuncio })
+  );
+  ok(
+    "la reentrega no duplicó el mensaje",
+    despues === antes + 1,
+    `entrantes antes ${antes}, después ${despues} (se esperaba +1)`
+  );
+
+  /* ---------- 3 · la imagen se copia una vez por anuncio ---------- */
+  await entra(3, `Otra persona, mismo anuncio ${RUN}`, { ...R1, ctwa_clid: `clid-otro-${RUN}` });
+  const conv3 = await conversacionDe(3);
+  const imagen3 = conv3 ? await imagenDe(conv3.contact.id) : null;
+  ok(
+    "otra conversación del mismo anuncio usa la misma imagen",
+    !!imagenR1 && imagen3 === imagenR1,
+    `imagen ${imagen3} vs ${imagenR1}`
+  );
+
+  /* ---------- 4 · lo que no se descarga no rompe la ingesta ---------- */
+  const casos = [
+    { n: 4, nombre: "host que no es de Meta", imagen: "https://example.com/creativo.png" },
+    { n: 5, nombre: "redirección a otro host", imagen: creativo("creativo-redirige") },
+    { n: 6, nombre: "un SVG", imagen: creativo("creativo-svg") },
+    { n: 7, nombre: "más de 300 KB", imagen: creativo("creativo-enorme") },
+  ];
+  for (const caso of casos) {
+    await entra(caso.n, `Caso ${caso.n} ${RUN}`, referralCtwa({ id: 10 + caso.n, titular: `Caso ${caso.n} ${RUN}`, imagen: caso.imagen }));
+    const conv = await conversacionDe(caso.n);
+    ok(`${caso.nombre}: el mensaje y el anuncio entran`, !!conv?.anuncio, JSON.stringify(conv?.anuncio));
+    caso.contactId = conv?.contact?.id;
+  }
+  await sleep(3000); // la copia en segundo plano termina (o no)
+  for (const caso of casos) {
+    const d = caso.contactId ? await detalle(caso.contactId) : null;
+    ok(
+      `${caso.nombre}: sin imagen, y la tarjeta sigue`,
+      !!d?.anuncio && d.anuncio.imageAssetId === null,
+      JSON.stringify(d?.anuncio)
+    );
+  }
+
+  await entra(8, `Escribí sin anuncio ${RUN}`);
+  const convOrg = await conversacionDe(8);
+  const dOrg = convOrg ? await detalle(convOrg.contact.id) : null;
+  ok(
+    "una conversación orgánica no tiene anuncio",
+    !!convOrg && convOrg.anuncio === null && dOrg?.anuncio === null &&
+      dOrg?.contact?.source?.value === "desconocida",
+    `lista ${JSON.stringify(convOrg?.anuncio)}, detalle ${JSON.stringify(dOrg?.anuncio)}`
+  );
+
+  await entra(9, `Referral sin datos ${RUN}`, { body: "sin nada que identifique", media_type: "image" });
+  const convBasura = await conversacionDe(9);
+  ok(
+    "un referral sin nada útil no crea anuncio, y el mensaje entra",
+    !!convBasura && convBasura.anuncio === null,
+    JSON.stringify(convBasura?.anuncio)
+  );
+
+  await entra(10, `Desde una publicación ${RUN}`, referralCtwa({ id: 30, titular: `Publicación ${RUN}`, imagen: creativo(`creativo-verde-${RUN}`), tipo: "post" }));
+  const convPub = await conversacionDe(10);
+  const dPub = convPub ? await detalle(convPub.contact.id) : null;
+  ok(
+    "una publicación se enseña, pero no cuenta como fuente «anuncio»",
+    convPub?.anuncio?.sourceType === "post" && dPub?.contact?.source?.value === "desconocida",
+    `lista ${JSON.stringify(convPub?.anuncio)}, fuente ${JSON.stringify(dPub?.contact?.source)}`
+  );
+
+  /* ---------- 4b · un tropiezo de red no deja la tarjeta sin imagen ---------- */
+  // La primera petición tarda más que la espera de la copia: el reintento la trae.
+  await entra(13, `Creativo lento ${RUN}`, referralCtwa({ id: 40, titular: `Lento ${RUN}`, imagen: creativo(`creativo-lento-${RUN}`) }));
+  const convLento = await conversacionDe(13);
+  const imagenLenta = convLento ? await imagenDe(convLento.contact.id, 25000) : null;
+  ok("una descarga que se cuelga una vez se reintenta y llega", !!imagenLenta, "la imagen no llegó tras el reintento");
+
+  // Falla la copia y su reintento (503 dos veces): la repara abrir el contacto.
+  await entra(14, `Creativo que falla ${RUN}`, referralCtwa({ id: 41, titular: `Falla ${RUN}`, imagen: creativo(`creativo-falla-${RUN}`) }));
+  const convFalla = await conversacionDe(14); // la lista no repara nada
+  await sleep(4000);
+  const primera = convFalla ? await detalle(convFalla.contact.id) : null;
+  ok(
+    "tras dos fallos la tarjeta llega sin imagen",
+    !!primera?.anuncio && primera.anuncio.imageAssetId === null,
+    JSON.stringify(primera?.anuncio)
+  );
+  const reparada = convFalla ? await imagenDe(convFalla.contact.id, 16000) : null;
+  ok("y abrir el contacto la repara en segundo plano", !!reparada, "la imagen no se reparó");
+}
+
+/* ============================================================
+ * R11 — Robustez de la API del bot (sección autocontenida)
+ *
+ * Cada parte dice qué rompía antes. Todo lleva un sufijo por corrida:
+ * re-correr contra la misma base (o dentro de la ventana del limitador) no
+ * puede medir lo de la corrida anterior.
+ * ============================================================ */
+async function r11BotChecks() {
+  const RUN = Date.now().toString().slice(-6);
+
+  /*
+   * 1. Una inundación sin key desde UNA IP no le quita el turno al cerebro.
+   *    Antes: un cubo global contado ANTES de autenticar → 429 para Nea el
+   *    resto de la ventana, y clientes sin respuesta.
+   */
+  console.log("\n== R11: 700 requests sin key desde una IP vs. el cerebro ==");
+  const deReferencia = ((await api("/api/conversations")).json?.conversations ?? [])[0];
+  ok("hay una conversación para que el cerebro pregunte", Boolean(deReferencia));
+  // Una IP por corrida: la de la corrida anterior puede seguir frenada.
+  const IP = `10.${Number(RUN.slice(0, 2))}.${Number(RUN.slice(2, 4))}.${Number(RUN.slice(4, 6))}`;
+  const intento = (key, ip = IP) =>
+    fetch(`${BASE}/api/bot/context?conversationId=${deReferencia?.id}`, {
+      headers: { "x-forwarded-for": ip, ...(key ? { "x-api-key": key } : {}) },
+    }).then((r) => r.status);
+  const vistos = {};
+  const cerebroDurante = [];
+  for (let lote = 0; lote < 14; lote++) {
+    const fallidos = Array.from({ length: 50 }, (_, i) =>
+      intento(i % 2 ? "clave-equivocada-0123456789" : undefined)
+    );
+    // El cerebro pregunta EN MEDIO de la inundación, desde otra IP y desde
+    // la misma (mismo proxy, o sin proxy donde todo es "local").
+    const cerebro = lote === 7 ? [intento(BOT_KEY, "10.255.0.1"), intento(BOT_KEY)] : [];
+    const [estados, deCerebro] = await Promise.all([
+      Promise.all(fallidos),
+      Promise.all(cerebro),
+    ]);
+    for (const s of estados) vistos[s] = (vistos[s] ?? 0) + 1;
+    cerebroDurante.push(...deCerebro);
+  }
+  ok(
+    "la inundación: 30 → 401 y las otras 670 → 429 (frenada por IP)",
+    vistos[401] === 30 && vistos[429] === 670,
+    JSON.stringify(vistos)
+  );
+  ok(
+    "el cerebro DURANTE la inundación → 200 (otra IP y la misma)",
+    cerebroDurante.length === 2 && cerebroDurante.every((s) => s === 200),
+    JSON.stringify(cerebroDurante)
+  );
+  const despues = [await intento(BOT_KEY, "10.255.0.1"), await intento(BOT_KEY)];
+  ok(
+    "el cerebro DESPUÉS de la inundación → 200",
+    despues.every((s) => s === 200),
+    JSON.stringify(despues)
+  );
+  const otraIp = await intento(undefined, `10.254.${Number(RUN.slice(2, 4))}.${Number(RUN.slice(4, 6))}`);
+  ok("otra IP sin key sigue en 401 (el freno es por IP, no global)", otraIp === 401, `status=${otraIp}`);
+
+  /*
+   * 2. Quien escribió primero CON teléfono y luego llega solo con BSUID: el
+   *    contexto por `bsuid:<id>` es su contacto. Antes: 404, y el cerebro
+   *    no podía contestarle.
+   */
+  console.log("\n== R11: contexto por BSUID de quien escribió con teléfono ==");
+  const inbound = (body) =>
+    api("/api/dev/wa-mock/inbound", {
+      method: "POST",
+      body: JSON.stringify({ phoneNumberId: PN, ...body }),
+    });
+  const convDe = async (canonico) =>
+    ((await api("/api/conversations")).json?.conversations ?? []).find(
+      (c) => c.contact.phone === canonico
+    );
+  const mensajesDe = async (id) =>
+    (await api(`/api/conversations/${id}/messages`)).json?.messages ?? [];
+  const CANON = `524629${RUN}`;
+  const BSU = `MX.r11.${RUN}`;
+  const NOMBRE = `R11 BSUID ${RUN}`;
+  await inbound({
+    from: `5214629${RUN}`,
+    fromUserId: BSU,
+    name: NOMBRE,
+    text: "hola, les escribo con mi número",
+    waMessageId: `wamid.e2e.r11.tel.${RUN}`,
+  });
+  await hasta(async () => Boolean(await convDe(CANON)));
+  const conv = await convDe(CANON);
+  ok("el contacto nace con el teléfono como identidad", Boolean(conv));
+
+  // Meta ya no manda el teléfono: solo el BSUID.
+  await inbound({
+    fromUserId: BSU,
+    name: NOMBRE,
+    text: "y ahora sin número",
+    waMessageId: `wamid.e2e.r11.bsu.${RUN}`,
+  });
+  const reconciliado = await hasta(async () =>
+    conv ? (await mensajesDe(conv.id)).some((m) => m.text === "y ahora sin número") : false
+  );
+  ok("la ingesta reconcilia el mensaje solo-BSUID a la MISMA conversación", reconciliado);
+
+  const bsuid = encodeURIComponent(`bsuid:${BSU}`);
+  const porBsuid = await bot(`/api/bot/context?waIdentity=${bsuid}`);
+  ok(
+    "GET /api/bot/context?waIdentity=bsuid:<id> → 200 (antes 404)",
+    porBsuid.res.status === 200,
+    `status=${porBsuid.res.status}`
+  );
+  ok(
+    "…y es el MISMO contacto y conversación (su identidad sigue siendo el teléfono)",
+    porBsuid.json?.conversation?.id === conv?.id &&
+      porBsuid.json?.contact?.waIdentity === CANON,
+    JSON.stringify({ conv: porBsuid.json?.conversation?.id, contact: porBsuid.json?.contact })
+  );
+  const neutro = await bot(`/api/bot/context?identity=${bsuid}`);
+  ok(
+    "el nombre neutro `identity` resuelve igual",
+    neutro.json?.conversation?.id === conv?.id,
+    `status=${neutro.res.status}`
+  );
+  const nadie = await bot(
+    `/api/bot/context?waIdentity=${encodeURIComponent(`bsuid:MX.r11.nadie.${RUN}`)}`
+  );
+  ok("un BSUID que nadie tiene sigue en 404", nadie.res.status === 404, `status=${nadie.res.status}`);
+
+  /*
+   * 3. Pedir cita con la agenda apagada no termina en "Error del proveedor
+   *    de IA": el ai-mock ya no ofrece horarios que el prompt no le enseñó
+   *    (el esquema del turno los rechazaba y el agente traspasaba).
+   */
+  const agenda = /^(on|1|true|si|sí|yes)$/i.test((process.env.AGENDA ?? "").trim());
+  console.log(`\n== R11: pedir cita con la agenda ${agenda ? "encendida" : "apagada"} ==`);
+  await api("/api/agent/profile", { method: "PUT", body: JSON.stringify({ enabled: true }) });
+  const CANON_CITA = `524630${RUN}`;
+  await inbound({
+    from: `5214630${RUN}`,
+    name: `R11 Cita ${RUN}`,
+    text: "hola, ¿dan citas el sábado?",
+    waMessageId: `wamid.e2e.r11.cita.${RUN}`,
+  });
+  const salientesCita = async () => {
+    const c = await convDe(CANON_CITA);
+    return c ? (await mensajesDe(c.id)).filter((m) => m.direction === "out") : [];
+  };
+  await hasta(
+    async () =>
+      Boolean((await convDe(CANON_CITA))?.handoffAt) || (await salientesCita()).length > 0,
+    25000
+  );
+  const convCita = await convDe(CANON_CITA);
+  const salientes = await salientesCita();
+  ok(
+    "el agente contesta y NO traspasa por «Error del proveedor de IA»",
+    !convCita?.handoffAt && salientes.some((m) => m.origin === "ai"),
+    JSON.stringify({ reason: convCita?.handoffReason, salientes: salientes.map((m) => m.text) })
+  );
+  if (!agenda) {
+    ok(
+      "con la agenda apagada no ofrece horarios",
+      !salientes.some((m) => /horario/i.test(m.text ?? "")),
+      JSON.stringify(salientes.map((m) => m.text))
+    );
+  }
+  await api("/api/agent/profile", { method: "PUT", body: JSON.stringify({ enabled: false }) });
 }

@@ -10,7 +10,9 @@
  *  - los campos de texto miden ≥16px (si no, iOS hace zoom y descuadra todo);
  *  - en escritorio NADA de lo anterior cambia (el lateral sigue fijo);
  *  - la barra lateral es azul marino también con el tema claro, y el pomo de
- *    los interruptores queda dentro de su pista, encendido y apagado (#53).
+ *    los interruptores queda dentro de su pista, encendido y apagado (#53);
+ *  - con el tema oscuro la barra sigue más oscura que la página, lo que flota
+ *    se despega y la franja del teléfono es la misma pieza que la barra (R8).
  *
  * Uso: node scripts/e2e-responsive.mjs
  * Requiere: app corriendo (pnpm dev) con WA_MOCK_ENABLED=true y Playwright.
@@ -51,6 +53,7 @@ const RUTAS = [
   "/inbox",
   "/pipeline",
   "/contacts",
+  "/results",
   "/agent",
   "/lab",
   "/settings/whatsapp",
@@ -421,6 +424,63 @@ await probarInterruptor(desk, "IA en esta conversación");
 await desk.goto(`${BASE}/agent`, { waitUntil: "domcontentloaded" });
 await probarInterruptor(desk, "Agente encendido");
 await desk.screenshot({ path: `${SHOTS}/desktop-agente.png` });
+
+console.log("\n== 8. Tema oscuro: el bicolor no desaparece (R8) ==");
+// Mismo criterio que la barra en claro: luminancias medidas en el navegador,
+// no un hex. Con el tema oscuro de antes, barra y página quedaban a 1.04:1.
+const contraste = (a, b) => {
+  const [x, y] = [luminancia(a), luminancia(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+};
+await ctx.addCookies([{ name: "vocero-theme", value: "dark", url: BASE }]);
+await desk.goto(`${BASE}/contacts`, { waitUntil: "domcontentloaded" });
+const nuevo = desk.getByRole("button", { name: /Nuevo contacto/ });
+const dialogo = desk.locator('[role="dialog"][aria-label="Nuevo contacto"]');
+// Un clic antes de hidratar se pierde: reintenta hasta que aparezca.
+await until(async () => {
+  await nuevo.click();
+  return dialogo.isVisible();
+}, 20000);
+const oscuro = await desk.evaluate(() => {
+  const aside = document.querySelector("aside");
+  const dlg = document.querySelector('[role="dialog"][aria-label="Nuevo contacto"]');
+  return {
+    tema: document.documentElement.dataset.theme,
+    barra: aside ? getComputedStyle(aside).backgroundColor : "",
+    pagina: getComputedStyle(document.body).backgroundColor,
+    dialogo: dlg ? getComputedStyle(dlg).backgroundColor : "",
+  };
+});
+ok(
+  "en oscuro, la barra es más oscura que la página (≥ 1.25:1)",
+  oscuro.tema === "dark" &&
+    luminancia(oscuro.barra) < luminancia(oscuro.pagina) &&
+    contraste(oscuro.barra, oscuro.pagina) >= 1.25,
+  JSON.stringify(oscuro)
+);
+ok(
+  "en oscuro, el diálogo flota un escalón arriba de la página",
+  luminancia(oscuro.dialogo) > luminancia(oscuro.pagina),
+  JSON.stringify(oscuro)
+);
+await desk.keyboard.press("Escape");
+await desk.setViewportSize(PHONE);
+await desk.goto(`${BASE}/inbox`, { waitUntil: "domcontentloaded" });
+await desk.getByRole("button", { name: "Abrir el menú" }).waitFor({ timeout: 20000 });
+const franja = await desk.evaluate(() => {
+  const aside = document.querySelector("aside");
+  const barra = document.querySelector("main")?.previousElementSibling;
+  return {
+    barra: barra ? getComputedStyle(barra).backgroundColor : "",
+    lateral: aside ? getComputedStyle(aside).backgroundColor : "",
+  };
+});
+ok(
+  "en el teléfono, la franja de arriba es la misma pieza que la barra",
+  franja.barra !== "" && franja.barra === franja.lateral,
+  JSON.stringify(franja)
+);
+await desk.screenshot({ path: `${SHOTS}/phone-inbox-oscuro.png` });
 
 console.log(
   failures === 0

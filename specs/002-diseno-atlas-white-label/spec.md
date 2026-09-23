@@ -87,6 +87,10 @@ título del documento, acentos, botones, badges).
 - Acento personalizado con contraste insuficiente sobre blanco → derivar
   `--accent-text` oscurecido y validar que el texto blanco sobre el acento
   cumpla contraste razonable (si muy claro, oscurecer el acento base).
+  R8: "razonable" es AA — la tinta encima del acento es blanca solo si pasa
+  4.5:1; si no, casi negra (`#0f1419`), en los dos temas y en la barra. El
+  acento base se oscurece (claro) o aclara (oscuro) solo hasta que el relleno
+  se despegue del fondo y alguna de las dos tintas pase.
 - Nombre vacío → vuelve al default. Longitud máx 30.
 - Panel colapsado persiste en localStorage.
 - `prefers-reduced-motion` → transiciones ~0ms.

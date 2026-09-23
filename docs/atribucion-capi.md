@@ -1,6 +1,8 @@
 # Atribución de anuncios y Conversions API
 
 > Feature opcional (016), apagada por defecto. Se enciende con `ATRIBUCION=on`.
+> **De qué anuncio llegó** cada conversación se ve siempre, con la bandera o
+> sin ella (018): ver [abajo](#de-qué-anuncio-llegó-siempre-visible).
 
 ## El problema que resuelve
 
@@ -48,6 +50,60 @@ Ambos salen con el `ctwa_clid` del clic y el id de tu cuenta de WhatsApp.
 Los dos eventos se disparan desde la única puerta que mueve leads de etapa, así
 que da igual quién lo mueva: tú arrastrando la tarjeta, el agente incluido o tu
 propio bot por `/api/bot/*`.
+
+## De qué anuncio llegó (siempre visible)
+
+Meta dice de qué anuncio vino una persona en el **primer** mensaje de la
+conversación (el objeto `referral` del webhook), y no lo vuelve a decir. Vocero
+lo guarda con la conversación y lo enseña donde se atiende:
+
+- **Bandeja**: el renglón dice «Anuncio · titular» («Publicación» si el clic
+  vino de una publicación y no de un anuncio pagado), y aparece un filtro
+  **Anuncios** en cuanto hay al menos una conversación así.
+- **Panel del contacto** y **cajón del trato** del pipeline: una tarjeta con la
+  imagen del creativo, el titular y el texto del anuncio, «Primer mensaje ·
+  fecha», «con video» si lo era, el ID del anuncio y un enlace **Ver anuncio**.
+
+Esto **no depende de la bandera**: el dato viaja dentro del webhook que la
+instancia ya recibe, no pide credenciales ni llama a nadie, y es inerte si nunca
+llega un anuncio. Lo que la bandera sí decide:
+
+| | Sin `ATRIBUCION` | Con `ATRIBUCION=on` |
+|---|---|---|
+| Origen del anuncio en la bandeja | Sí | Sí |
+| `ctwa_clid` guardado | **No** (ni en su columna ni dentro del `raw`) | Sí |
+| «Meta identificó el clic» en la tarjeta | No | Sí (solo la presencia; el valor jamás sale del servidor) |
+| Ajustes → Anuncios y envío a Meta | 404 | Sí |
+
+Lo que la tarjeta **no** trae: el nombre del anuncio, de la campaña o del
+conjunto. Meta no los manda en el `referral`; pedirlos exigiría la API de
+Marketing con permisos de anuncios del negocio. Por ahora solo WhatsApp:
+Instagram y Messenger mandan otra forma de `referral`.
+
+### La imagen del creativo
+
+La URL que manda Meta **caduca en días** (el parámetro `oe=` de su CDN), así que
+se copia al llegar: una vez por anuncio, al mismo volumen de adjuntos
+(`MEDIA_DIR`), y se sirve por `/api/media/{id}` con sesión, como cualquier
+adjunto. Como esa URL llega dentro de un payload externo, la copia se defiende
+de que la usen para hacer que el servidor pida cosas de su propia red (SSRF):
+
+- solo `https://` a hosts de Meta (`fbcdn.net`, `fbsbx.com`, `facebook.com`,
+  `cdninstagram.com`, `instagram.com` y sus subdominios), sin usuario ni
+  contraseña en la URL y sin puertos explícitos;
+- las redirecciones no se siguen solas: cada salto se vuelve a validar, máximo 3;
+- solo JPEG, PNG, WebP o GIF (nunca SVG, que servido desde el CRM podría
+  ejecutar scripts), de hasta 300 KB, leídos con tope;
+- 5 segundos por intento y **un** reintento si el fallo fue de red, 5xx o 429.
+
+Si aun así no se pudo, la tarjeta sale igual, sin imagen, y abrir el contacto la
+vuelve a intentar en segundo plano, como mucho una vez cada 10 minutos por
+anuncio. Eso cubre también las conversaciones que 016 guardó antes de que
+existiera la copia: su `raw` conserva la URL, y mientras Meta no la caduque la
+imagen aparece sola al abrir el contacto.
+
+En pruebas, con los mocks habilitados (nunca en producción), se acepta además el
+origen de `META_GRAPH_BASE_URL`, donde el wa-mock sirve creativos de mentira.
 
 ## Cómo saber si está funcionando
 
@@ -130,7 +186,8 @@ acuse y el registro en la actividad. Dos advertencias ganadas a golpes:
 
 **¿Y los leads de antes de encender la bandera?** No se atribuyen: sin `ATRIBUCION`
 el CRM no guarda el `ctwa_clid`, y sin él no hay nada que reportar. Tampoco se
-pierde gran cosa — la ventana de atribución de Meta se mide en días.
+pierde gran cosa — la ventana de atribución de Meta se mide en días. De qué
+anuncio llegaron sí lo sabes: eso se guarda siempre, solo que sin el clic.
 
 **¿Qué pasa si Meta está caído?** El lead se mueve igual. La conversión queda
 registrada como fallida con el motivo. Ninguna parte de tu operación depende de
@@ -139,6 +196,7 @@ que Meta conteste.
 **¿Y el Laboratorio?** Una conversación de prueba **nunca** produce un evento.
 Es el mismo guardrail que impide que el Laboratorio mande WhatsApps reales.
 
-**¿Se puede apagar?** Sí: quita `ATRIBUCION` y toda la superficie desaparece. O
-desconecta el dataset desde la pantalla y deja de reportarse, conservando la
-bitácora de lo que ya se dijo.
+**¿Se puede apagar?** Sí: quita `ATRIBUCION` y toda la superficie de la
+Conversions API desaparece, y los clics nuevos dejan de guardarse (de qué anuncio
+llegó cada conversación se sigue viendo). O desconecta el dataset desde la
+pantalla y deja de reportarse, conservando la bitácora de lo que ya se dijo.
