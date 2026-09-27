@@ -1,4 +1,5 @@
-import { count, eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
+import { customAlphabet } from "nanoid";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
 
@@ -11,30 +12,32 @@ const SEED_STAGES: { name: string; kind: "open" | "won" | "lost" }[] = [
   { name: "Perdido", kind: "lost" },
 ];
 
+const slugSuffix = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyz", 8);
+
 /**
- * Primer registro de la instancia: crea la organización, deja al usuario como
- * propietario y siembra pipeline + perfil del agente.
+ * 020 — Plataforma multi-tenant: cada alta pública crea SU PROPIA
+ * organización (D2). Un alta interna (`runInternalSignup`: cuenta de equipo o
+ * script del super-admin) NO crea organización — se une a la del owner o no
+ * pertenece a ninguna (super-admin, E4).
  *
- * Solo actúa si NO existe ninguna organización (las cuentas de equipo las crea
- * el propietario y reciben su membresía explícita). Un advisory lock evita que
- * dos registros simultáneos en instancia vacía creen dos organizaciones.
+ * Sin lock de "primer arranque": ya no hay una organización especial que
+ * proteger, así que dos registros simultáneos simplemente crean dos
+ * organizaciones distintas (FR-002).
  */
-export async function onUserCreated(userId: string, userName: string) {
+export async function onUserCreated(
+  userId: string,
+  userName: string,
+  opts: { internal: boolean }
+): Promise<void> {
+  if (opts.internal) return;
+
   const db = getDb();
   await db.transaction(async (tx) => {
-    // Lock transaccional de "primer arranque" (clave arbitraria fija):
-    // dos registros simultáneos en instancia vacía → solo uno crea la org.
-    await tx.execute(sql`select pg_advisory_xact_lock(874201)`);
-    const [orgs] = await tx
-      .select({ n: count() })
-      .from(schema.organization);
-    if ((orgs?.n ?? 0) > 0) return;
-
     const orgId = newId("organization");
     await tx.insert(schema.organization).values({
       id: orgId,
       name: userName ? `Negocio de ${userName}` : "Mi negocio",
-      slug: "principal",
+      slug: `negocio-${slugSuffix()}`,
     });
     await tx.insert(schema.member).values({
       id: newId("member"),
@@ -58,23 +61,41 @@ export async function onUserCreated(userId: string, userName: string) {
   });
 }
 
-/** Organización activa de un usuario (su primera membresía). */
+/** Organización activa de un usuario (su única membresía, E5). */
 export async function resolveActiveOrganizationId(
   userId: string
 ): Promise<string | null> {
   return (await resolveMembership(userId))?.organizationId ?? null;
 }
 
+export type Membership = {
+  organizationId: string;
+  role: string;
+  /** 020 — la organización está suspendida (FR-005/006). */
+  suspendedAt: Date | null;
+};
+
+/**
+ * La membresía del usuario, con el estado de suspensión de SU organización
+ * (E5: un usuario pertenece a exactamente una). Un super-admin (E4) no tiene
+ * membresía y esta función devuelve null para él — su gate vive en
+ * `src/server/platform/admins.ts`, no aquí.
+ */
 export async function resolveMembership(
   userId: string
-): Promise<{ organizationId: string; role: string } | null> {
+): Promise<Membership | null> {
   const db = getDb();
   const rows = await db
     .select({
       organizationId: schema.member.organizationId,
       role: schema.member.role,
+      suspendedAt: schema.organization.suspendedAt,
     })
     .from(schema.member)
+    .innerJoin(
+      schema.organization,
+      eq(schema.organization.id, schema.member.organizationId)
+    )
     .where(eq(schema.member.userId, userId))
     .limit(1);
   return rows[0] ?? null;

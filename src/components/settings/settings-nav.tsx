@@ -11,6 +11,8 @@ const TABS: Tab[] = [
   { href: "/settings/branding", label: "Marca" },
   { href: "/settings/templates", label: "Plantillas" },
   { href: "/settings/team", label: "Equipo" },
+  // 020 — clave de API por organización: existe siempre, sin bandera.
+  { href: "/settings/api", label: "API" },
 ];
 
 /** 015 — "Agenda" solo existe si esta instancia encendió la bandera. */

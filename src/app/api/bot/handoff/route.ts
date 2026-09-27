@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/lib/db";
 import { apiError, parseBody } from "@/lib/api";
-import { requireBotKey, resolveInstanceOrg } from "@/server/bot/auth";
+import { requireBotKey } from "@/server/bot/auth";
 import { publish } from "@/server/events/bus";
 import { toHandoffReason } from "@/server/bot/handoff";
 
@@ -26,13 +26,9 @@ const bodySchema = z.object({
  * así que la app lo ve en vivo sin refrescar.
  */
 export async function POST(req: Request) {
-  const denied = requireBotKey(req);
-  if (denied) return denied;
-
-  const organizationId = await resolveInstanceOrg();
-  if (!organizationId) {
-    return apiError(409, "no_org", "La instancia aún no tiene organización");
-  }
+  const gate = await requireBotKey(req);
+  if (gate instanceof Response) return gate;
+  const { organizationId } = gate;
 
   const body = await parseBody(req, bodySchema);
   if (!body.ok) return body.response;

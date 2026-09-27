@@ -5,9 +5,13 @@
  */
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    const { checkMediaDir, cleanupOrphanRuns, startCoexistenceWorker } = await import(
-      "./instrumentation-node"
-    );
+    const {
+      checkMediaDir,
+      cleanupOrphanRuns,
+      startCoexistenceWorker,
+      warnIfLegacyBotApiKeyConfigured,
+    } = await import("./instrumentation-node");
+    warnIfLegacyBotApiKeyConfigured();
     await checkMediaDir();
     await cleanupOrphanRuns();
     startCoexistenceWorker();

@@ -1,7 +1,6 @@
-﻿import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 import { serializeBotProfile } from "@/server/bot/profile";
 import type { schema } from "@/lib/db";
-import { resetRateLimit } from "@/lib/rate-limit";
 // Estático a propósito: `vi.mock` se hoistea por encima de los imports, así que
 // la ruta ya nace con la BD falsa. Importarla DENTRO de cada test cargaba la
 // cadena de módulos con el reloj corriendo y, con la suite completa en
@@ -9,6 +8,7 @@ import { resetRateLimit } from "@/lib/rate-limit";
 import { GET } from "@/app/api/bot/profile/route";
 
 const dbState = vi.hoisted(() => ({ queue: [] as unknown[][] }));
+const KEY = vi.hoisted(() => "clave-de-servicio-larga-0123456789abcdef");
 
 vi.mock("@/lib/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/db")>();
@@ -21,10 +21,21 @@ vi.mock("@/lib/db", async (importOriginal) => {
   return { ...actual, getDb: () => builder };
 });
 
-vi.mock("@/server/bot/auth", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/server/bot/auth")>();
-  return { ...actual, resolveInstanceOrg: async () => "org_1" };
-});
+// 020 — La clave es POR ORGANIZACIÓN; este test cubre la ruta del perfil, no
+// el gate de autenticación (ver bot-gateway.test.ts y bot-keys.test.ts). Se
+// sustituye `requireBotKey` entero por una versión mínima que solo distingue
+// "trae la clave esperada" de "no la trae".
+vi.mock("@/server/bot/auth", () => ({
+  requireBotKey: async (req: Request) => {
+    if (req.headers.get("x-api-key") !== KEY) {
+      return Response.json(
+        { error: { code: "unauthorized", message: "No autorizado" } },
+        { status: 401 }
+      );
+    }
+    return { organizationId: "org_1" };
+  },
+}));
 
 /** Perfil del agente + knowledge base vía la API de servicio `/api/bot/*`. */
 
@@ -112,14 +123,9 @@ describe("serializeBotProfile", () => {
 });
 
 describe("GET /api/bot/profile (ruta, DB fake)", () => {
-  const KEY = "clave-de-servicio-larga-0123456789abcdef";
-
   beforeEach(() => {
-    vi.stubEnv("BOT_API_KEY", KEY);
-    resetRateLimit();
     dbState.queue = [];
   });
-  afterEach(() => vi.unstubAllEnvs());
 
   function req(key?: string): Request {
     return new Request("http://localhost/api/bot/profile", {

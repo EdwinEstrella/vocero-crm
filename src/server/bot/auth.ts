@@ -1,39 +1,30 @@
-import { timingSafeEqual } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { apiError } from "@/lib/api";
 import { checkRateLimit, clientIp } from "@/lib/rate-limit";
 import { markBotSeen } from "@/server/bot/status";
+import { resolveBotKey, touchBotKeyLastUsed } from "@/server/bot/keys";
 
 /**
  * Autenticación de la API de servicio `/api/bot/*`.
  *
- * Esta superficie NO la consume el navegador: la consume un cerebro externo
- * (un microservicio propio del operador, en su mismo servidor) que quiere
- * conducir la conversación sin que el token de WhatsApp salga del CRM.
- * Header `X-API-Key` contra `BOT_API_KEY` (env), comparación en tiempo
- * constante. Sin `BOT_API_KEY` configurada, toda la superficie responde 401.
+ * 020 — La clave es POR ORGANIZACIÓN (D5): se genera en Ajustes → API y su
+ * sha256 resuelve el tenant del request. La variable global `BOT_API_KEY`
+ * queda retirada (E1) — un valor igual a ella se trata como cualquier clave
+ * desconocida (401).
  *
  * Primero se autentica y DESPUÉS se cuenta. Antes había un solo cubo global
  * contado antes de mirar la key: 600 requests anónimos por minuto dejaban al
  * cerebro en 429 el resto de la ventana, y los clientes sin respuesta.
  */
 
-const MIN_KEY_LENGTH = 16;
-
-/** La superficie está abierta: hay `BOT_API_KEY` y no es débil. Una key
- *  corta equivale a no tenerla (todo responde 401). */
-export function isBotKeyConfigured(): boolean {
-  const key = process.env.BOT_API_KEY;
-  return typeof key === "string" && key.length >= MIN_KEY_LENGTH;
-}
-
 /**
- * Presupuesto del cerebro AUTENTICADO: 1200/min (20/s sostenidos). Nea hace
- * ~4-10 llamadas por turno de cliente (contexto, "escribiendo…", 1-3
- * mensajes y, cuando aplica, ficha, handoff, agenda o adjuntos): alcanza para
- * 120-300 turnos por minuto, por encima del pico de un solo negocio. Un
- * cerebro desbocado en un bucle queda en 20/s, carga que el monolito absorbe
- * sin que la bandeja lo note.
+ * Presupuesto del cerebro AUTENTICADO, POR ORGANIZACIÓN: 1200/min (20/s
+ * sostenidos). Nea hace ~4-10 llamadas por turno de cliente (contexto,
+ * "escribiendo…", 1-3 mensajes y, cuando aplica, ficha, handoff, agenda o
+ * adjuntos): alcanza para 120-300 turnos por minuto, por encima del pico de
+ * un solo negocio. El cerebro de una organización nunca agota el presupuesto
+ * de otra (FR de aislamiento, US3-7).
  */
 export const BOT_API_BUDGET = { windowMs: 60_000, max: 1200 };
 
@@ -41,54 +32,59 @@ export const BOT_API_BUDGET = { windowMs: 60_000, max: 1200 };
  * Autenticaciones FALLIDAS por IP: 30/min, y luego 429. Jamás tocan el
  * presupuesto de arriba, y una key correcta pasa aunque su IP esté frenada:
  * detrás del mismo proxy (o sin proxy, donde todo es "local") el cerebro puede
- * compartir IP con quien inunda. Adivinar la key tampoco es el riesgo: mide
- * 16+ caracteres.
+ * compartir IP con quien inunda.
  */
 export const BOT_AUTH_FAILURES = { windowMs: 60_000, max: 30 };
 
-export function requireBotKey(req: Request): Response | null {
-  if (!validBotKey(req.headers.get("x-api-key"))) {
+export type BotGate = { organizationId: string };
+
+export async function requireBotKey(req: Request): Promise<BotGate | Response> {
+  const raw = req.headers.get("x-api-key");
+  const resolved = raw ? await resolveBotKey(raw) : null;
+  if (!resolved) {
     const ip = clientIp(req.headers);
     const fails = checkRateLimit(`bot-api-fail:${ip}`, BOT_AUTH_FAILURES);
     return fails.allowed
       ? apiError(401, "unauthorized", "No autorizado")
       : apiError(429, "rate_limited", "Demasiados intentos fallidos");
   }
-  // «Quién responde»: la única huella que deja el cerebro externo en el CRM.
-  // Se marca al autenticar, antes del presupuesto: un cerebro frenado por 429
-  // sigue siendo el que contesta.
-  markBotSeen();
-  const rl = checkRateLimit("bot-api", BOT_API_BUDGET);
-  if (!rl.allowed) return apiError(429, "rate_limited", "Demasiadas solicitudes");
-  return null;
-}
 
-function validBotKey(provided: string | null): boolean {
-  const expected = process.env.BOT_API_KEY;
-  if (!expected || !isBotKeyConfigured() || !provided) return false;
-  const a = Buffer.from(provided);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
+  if (await isOrganizationSuspendedForBot(resolved.organizationId)) {
+    return apiError(403, "org_suspendida", "Esta organización está suspendida");
+  }
+
+  // «Quién responde»: la única huella que deja el cerebro externo en el CRM,
+  // por organización (FR-012). Se marca al autenticar, antes del presupuesto:
+  // un cerebro frenado por 429 sigue siendo el que contesta.
+  markBotSeen(resolved.organizationId);
+  void touchBotKeyLastUsed(resolved.keyId).catch(() => {
+    // Best-effort: un fallo al anotar "último uso" no puede tumbar el turno.
+  });
+
+  const rl = checkRateLimit(
+    `bot-api:${resolved.organizationId}`,
+    BOT_API_BUDGET
+  );
+  if (!rl.allowed) return apiError(429, "rate_limited", "Demasiadas solicitudes");
+
+  return { organizationId: resolved.organizationId };
 }
 
 /**
- * Organización única de la instancia (self-hosted, un negocio). Cacheada en
- * memoria: la instancia jamás cambia de organización en runtime.
+ * Chequeo mínimo de suspensión para esta superficie: consulta directa a
+ * `organization.suspended_at`, sin caché. El módulo completo de plataforma
+ * (suspender/reactivar con su caché de 30s y su auditoría) es el alcance de
+ * la fase de plataforma (020, fase 4); aquí solo hace falta negar el acceso
+ * de una organización YA marcada como suspendida (US3-6).
  */
-let cachedOrgId: string | null = null;
-
-export async function resolveInstanceOrg(): Promise<string | null> {
-  if (cachedOrgId) return cachedOrgId;
+async function isOrganizationSuspendedForBot(
+  organizationId: string
+): Promise<boolean> {
   const db = getDb();
   const rows = await db
-    .select({ id: schema.organization.id })
+    .select({ suspendedAt: schema.organization.suspendedAt })
     .from(schema.organization)
+    .where(eq(schema.organization.id, organizationId))
     .limit(1);
-  cachedOrgId = rows[0]?.id ?? null;
-  return cachedOrgId;
-}
-
-/** Solo para tests. */
-export function resetInstanceOrgCache(): void {
-  cachedOrgId = null;
+  return rows[0]?.suspendedAt != null;
 }

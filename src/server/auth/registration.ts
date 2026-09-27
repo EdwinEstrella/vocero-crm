@@ -1,14 +1,13 @@
-import { count } from "drizzle-orm";
-import { getDb, schema } from "@/lib/db";
+import { parsePlatformAdminEmails } from "@/lib/env";
 
 /**
- * Registro público cerrado tras la primera organización (FR-060), salvo la
- * variable de escape ALLOW_SIGNUP=true. Las cuentas de equipo las crea el
- * propietario (bypass interno del gate).
+ * 020 — Registro público SIEMPRE abierto (D2): cada alta crea su propia
+ * organización. La única razón para rechazar un alta pública es que el
+ * correo esté reservado para el super-admin (E4/FR-004) — así nadie puede
+ * adelantarse a registrar el correo que el operador va a verificar con
+ * `scripts/platform-admin.mjs`.
  */
-export async function isPublicSignupAllowed(): Promise<boolean> {
-  if (process.env.ALLOW_SIGNUP === "true") return true;
-  const db = getDb();
-  const rows = await db.select({ n: count() }).from(schema.organization);
-  return (rows[0]?.n ?? 0) === 0;
+export function isReservedPlatformEmail(email: string): boolean {
+  const normalized = email.trim().toLowerCase();
+  return parsePlatformAdminEmails().includes(normalized);
 }

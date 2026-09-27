@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { apiError } from "@/lib/api";
-import { requireBotKey, resolveInstanceOrg } from "@/server/bot/auth";
+import { requireBotKey } from "@/server/bot/auth";
 import { serializeFicha } from "@/server/bot/ficha";
 import { findContactByIdentity } from "@/server/inbox/identity";
 import { isWindowOpen, windowRemainingMs } from "@/server/inbox/window";
@@ -24,13 +24,9 @@ export const dynamic = "force-dynamic";
  * (y, con la agenda encendida, qué citas tiene: `booking`).
  */
 export async function GET(req: Request) {
-  const denied = requireBotKey(req);
-  if (denied) return denied;
-
-  const organizationId = await resolveInstanceOrg();
-  if (!organizationId) {
-    return apiError(409, "no_org", "La instancia aún no tiene organización");
-  }
+  const gate = await requireBotKey(req);
+  if (gate instanceof Response) return gate;
+  const { organizationId } = gate;
 
   const url = new URL(req.url);
   const waIdentity =

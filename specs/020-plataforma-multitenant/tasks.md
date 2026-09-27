@@ -12,22 +12,22 @@ cambio (hecho junto con esta spec).
 
 ## Fase 1 — Fundacional (bloquea todo)
 
-- [ ] **T001** `src/lib/db/schema.ts`: `organization.suspendedAt` y
+- [X] **T001** `src/lib/db/schema.ts`: `organization.suspendedAt` y
       `suspendedReason`; `whatsappCoexistenceClaim.activatedAt`; tablas
       `platformAuditEvent`, `platformImpersonation`, `botApiKey`,
       `whatsappSmbSyncRequest` con sus índices (UNIQUE y parciales) tal como el
       Data Model de `plan.md`; `contact.nameSource` gana `"libreta"` en el enum TS.
-- [ ] **T002** `src/lib/db/ids.ts`: prefijos `pae`, `imp`, `bak`, `wss`. [P]
-- [ ] **T003** `pnpm db:generate` → `drizzle/0016_plataforma_multitenant.sql`
+- [X] **T002** `src/lib/db/ids.ts`: prefijos `pae`, `imp`, `bak`, `wss`. [P]
+- [X] **T003** `pnpm db:generate` → `drizzle/0016_plataforma_multitenant.sql`
       (aditiva, re-ejecutable: `IF NOT EXISTS` donde drizzle-kit no lo ponga) y
       su entrada en `drizzle/meta/_journal.json`.
-- [ ] **T004** `src/lib/env.ts`: `PLATFORM_ADMIN_EMAILS` opcional con
+- [X] **T004** `src/lib/env.ts`: `PLATFORM_ADMIN_EMAILS` opcional con
       `parsePlatformAdminEmails()` (coma, recorte, minúsculas, vacíos fuera);
       eliminar `ALLOW_SIGNUP`; `BOT_API_KEY` queda solo para el aviso de
       migración (documentado inline). [P]
-- [ ] **T005** `tests/unit/platform-env.test.ts`: parseo de la lista (mayúsculas,
+- [X] **T005** `tests/unit/platform-env.test.ts`: parseo de la lista (mayúsculas,
       espacios, vacíos, ausente = nadie es admin). [P]
-- [ ] **T006** `.env.example`, `docker-compose.yml`, `docker-compose.prod.yml`:
+- [X] **T006** `.env.example`, `docker-compose.yml`, `docker-compose.prod.yml`:
       quitar `ALLOW_SIGNUP`; agregar `PLATFORM_ADMIN_EMAILS` con guía inline
       (quién lo pone, que exige `scripts/platform-admin.mjs`, que el panel da 404
       a los demás); marcar `BOT_API_KEY` como retirada con la nota de migración
@@ -35,66 +35,66 @@ cambio (hecho junto con esta spec).
 
 ## Fase 2 — US1/US2: alta abierta y fin de la organización única (P1)
 
-- [ ] **T007** `src/server/auth/on-signup.ts`: `onUserCreated(userId, name,
+- [X] **T007** `src/server/auth/on-signup.ts`: `onUserCreated(userId, name,
       { internal })` crea organización (slug `negocio-<nanoid>`), membresía
       `owner`, etapas y `agentProfile` en una transacción SOLO si no es alta
       interna; quitar el advisory lock 874201 y la condición de cero
       organizaciones. `resolveMembership` devuelve también `suspendedAt` de la
       organización.
-- [ ] **T008** `src/server/auth/registration.ts`: reemplazar
+- [X] **T008** `src/server/auth/registration.ts`: reemplazar
       `isPublicSignupAllowed` por `isReservedPlatformEmail(email)`.
-- [ ] **T009** `src/lib/auth/index.ts`: `hooks.before` de `/sign-up/email`
+- [X] **T009** `src/lib/auth/index.ts`: `hooks.before` de `/sign-up/email`
       rechaza correos reservados (`403 correo_reservado`) y nada más;
       `databaseHooks.user.create.after` pasa `isInternalSignup()` a
       `onUserCreated`; `databaseHooks.session.create.before` rechaza con
       `APIError FORBIDDEN` "Tu cuenta está suspendida; contacta a soporte" si la
       organización del usuario está suspendida.
-- [ ] **T010** `src/app/(auth)/register/page.tsx`: copy "Crea la cuenta de tu
+- [X] **T010** `src/app/(auth)/register/page.tsx`: copy "Crea la cuenta de tu
       negocio"; sin mención a "la organización de la instancia". [P]
-- [ ] **T011** `src/server/branding.ts` + `src/app/api/branding/favicon/route.ts`
+- [X] **T011** `src/server/branding.ts` + `src/app/api/branding/favicon/route.ts`
       + `src/app/layout.tsx` + `src/app/(auth)/layout.tsx`: sin
       `organizationId` → `DEFAULT_BRANDING` y favicon por defecto; borrar el
       fallback `organization limit(1)`.
-- [ ] **T012** Auditar estado global de proceso dependiente de tenant:
+- [X] **T012** Auditar estado global de proceso dependiente de tenant:
       `src/server/bot/status.ts` (`markBotSeen`/`botLastSeenAt` con llave por
       organización), `src/server/agenda/connectors/{google,zoom}-credentials.ts`
       (confirmar llave por organización; corregir si no). [P]
-- [ ] **T013** `tests/unit/registration.test.ts` (reescribir) +
+- [X] **T013** `tests/unit/registration.test.ts` (reescribir) +
       `tests/unit/signup-multitenant.test.ts`: dos altas públicas → dos
       organizaciones; alta interna → ninguna; correo reservado → rechazado;
       ningún alta marca `emailVerified`.
-- [ ] **T014** `tests/unit/no-single-org.test.ts`: test estático que recorre
+- [X] **T014** `tests/unit/no-single-org.test.ts`: test estático que recorre
       `src/` y falla si encuentra `from(schema.organization)` seguido de
       `.limit(1)` sin `.where(` fuera de `src/server/platform/`. [P]
-- [ ] **T015** `tests/unit/branding.test.ts`: sin sesión → marca por defecto aun
+- [X] **T015** `tests/unit/branding.test.ts`: sin sesión → marca por defecto aun
       con organizaciones con marca propia. [P]
 
 ## Fase 3 — US3: clave de API por organización (P1)
 
-- [ ] **T016** `src/server/bot/keys.ts`: `generateBotKey` (`vk_` + 32 bytes
+- [X] **T016** `src/server/bot/keys.ts`: `generateBotKey` (`vk_` + 32 bytes
       base64url), `hashBotKey` (sha256 hex), `issueBotKey` (revoca activa +
       inserta en transacción), `revokeBotKey`, `resolveBotKey(raw)` (por hash,
       no revocada; `last_used_at` como mucho 1/min), `getBotKeyView`.
-- [ ] **T017** `src/server/bot/auth.ts`: `requireBotKey(req)` →
+- [X] **T017** `src/server/bot/auth.ts`: `requireBotKey(req)` →
       `{ organizationId } | Response`; 401 + limitador por IP como hoy; `403
       org_suspendida`; presupuesto `bot-api:{organizationId}`; `markBotSeen(orgId)`.
       Borrar `validBotKey` global, `isBotKeyConfigured`, `resolveInstanceOrg` y
       `resetInstanceOrgCache`.
-- [ ] **T018** Las diez rutas `src/app/api/bot/{bookings,typing,availability,reset,handoff,profile,ficha,context,messages}/route.ts`
+- [X] **T018** Las diez rutas `src/app/api/bot/{bookings,typing,availability,reset,handoff,profile,ficha,context,messages}/route.ts`
       y `src/app/api/bot/media/[mediaId]/route.ts`: tomar `organizationId` de
       `requireBotKey`.
-- [ ] **T019** `src/app/api/agent/brain-status/route.ts`: `botKeyConfigured` =
+- [X] **T019** `src/app/api/agent/brain-status/route.ts`: `botKeyConfigured` =
       la organización tiene clave activa; `lastSeen` por organización. [P]
-- [ ] **T020** `src/app/api/settings/api-key/route.ts`: `GET`/`POST`/`DELETE`
+- [X] **T020** `src/app/api/settings/api-key/route.ts`: `GET`/`POST`/`DELETE`
       según `contracts/api-key.md` (solo owner, `no-store`, 403 en
       suplantación — usa `session.impersonation` de T028).
-- [ ] **T021** `src/app/(app)/settings/api/page.tsx` +
+- [X] **T021** `src/app/(app)/settings/api/page.tsx` +
       `src/components/settings/api-key-client.tsx` + pestaña en
       `src/components/settings/settings-nav.tsx`: generar/rotar/revocar, secreto
       visible una vez con botón copiar, `last4`, creada, último uso.
-- [ ] **T022** `src/instrumentation-node.ts`: si `BOT_API_KEY` está definida,
+- [X] **T022** `src/instrumentation-node.ts`: si `BOT_API_KEY` está definida,
       un `console.warn` de migración sin el valor. [P]
-- [ ] **T023** `tests/unit/bot-keys.test.ts`: formato y entropía, hash estable,
+- [X] **T023** `tests/unit/bot-keys.test.ts`: formato y entropía, hash estable,
       clave de A resuelve A y nunca B, revocada → null, rotación invalida la
       anterior, `BOT_API_KEY` global → null, organización suspendida → 403.
       Actualizar `tests/unit/bot-gateway.test.ts`, `brain-status.test.ts`,

@@ -1,44 +1,39 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { isReservedPlatformEmail } from "@/server/auth/registration";
 
-/** FR-060/FR-081: registro cerrado tras la 1ª organización, salvo escape. */
-
-let orgCount = 0;
-
-vi.mock("@/lib/db", () => ({
-  getDb: () => ({
-    select: () => ({
-      from: () => Promise.resolve([{ n: orgCount }]),
-    }),
-  }),
-  schema: { organization: {} },
-}));
-
-import { isPublicSignupAllowed } from "@/server/auth/registration";
+/**
+ * 020 — El registro público SIEMPRE está abierto (D2): la única razón para
+ * rechazar un alta pública es que el correo esté reservado para el
+ * super-admin (E4/FR-004). El registro cerrado tras la primera organización
+ * (FR-060/1.x) queda retirado.
+ */
 
 afterEach(() => vi.unstubAllEnvs());
 
-describe("registro público cerrado", () => {
-  it("instancia vacía → registro permitido (primer usuario)", async () => {
-    orgCount = 0;
-    vi.stubEnv("ALLOW_SIGNUP", "");
-    expect(await isPublicSignupAllowed()).toBe(true);
+describe("isReservedPlatformEmail", () => {
+  it("sin PLATFORM_ADMIN_EMAILS → ningún correo está reservado", () => {
+    vi.stubEnv("PLATFORM_ADMIN_EMAILS", "");
+    expect(isReservedPlatformEmail("cualquiera@negocio.com")).toBe(false);
   });
 
-  it("ya existe una organización → cerrado", async () => {
-    orgCount = 1;
-    vi.stubEnv("ALLOW_SIGNUP", "");
-    expect(await isPublicSignupAllowed()).toBe(false);
+  it("correo listado → reservado", () => {
+    vi.stubEnv("PLATFORM_ADMIN_EMAILS", "admin@vocero.com");
+    expect(isReservedPlatformEmail("admin@vocero.com")).toBe(true);
   });
 
-  it("escape ALLOW_SIGNUP=true → permitido aunque exista organización", async () => {
-    orgCount = 1;
-    vi.stubEnv("ALLOW_SIGNUP", "true");
-    expect(await isPublicSignupAllowed()).toBe(true);
+  it("compara sin distinguir mayúsculas ni espacios de sobra", () => {
+    vi.stubEnv("PLATFORM_ADMIN_EMAILS", "admin@vocero.com");
+    expect(isReservedPlatformEmail("  Admin@Vocero.com  ")).toBe(true);
   });
 
-  it("otros valores del escape NO abren el registro", async () => {
-    orgCount = 1;
-    vi.stubEnv("ALLOW_SIGNUP", "1");
-    expect(await isPublicSignupAllowed()).toBe(false);
+  it("un correo no listado no se rechaza", () => {
+    vi.stubEnv("PLATFORM_ADMIN_EMAILS", "admin@vocero.com");
+    expect(isReservedPlatformEmail("dueno@otronegocio.com")).toBe(false);
+  });
+
+  it("varios correos separados por coma", () => {
+    vi.stubEnv("PLATFORM_ADMIN_EMAILS", "a@x.com,b@x.com");
+    expect(isReservedPlatformEmail("b@x.com")).toBe(true);
+    expect(isReservedPlatformEmail("c@x.com")).toBe(false);
   });
 });

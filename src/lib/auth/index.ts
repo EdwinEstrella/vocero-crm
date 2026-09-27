@@ -6,11 +6,8 @@ import { organization } from "better-auth/plugins";
 import { getDb, schema } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 import { AUTH_RATE_LIMIT, checkRateLimit, clientIp } from "@/lib/rate-limit";
-import {
-  onUserCreated,
-  resolveActiveOrganizationId,
-} from "@/server/auth/on-signup";
-import { isPublicSignupAllowed } from "@/server/auth/registration";
+import { onUserCreated, resolveMembership } from "@/server/auth/on-signup";
+import { isReservedPlatformEmail } from "@/server/auth/registration";
 
 /**
  * Contexto interno del proceso: permite que el alta de cuentas de equipo
@@ -75,12 +72,16 @@ function createAuth() {
             });
           }
         }
-        // Registro público cerrado tras la primera organización (FR-060).
-        if (ctx.path === "/sign-up/email") {
-          if (!isInternalSignup() && !(await isPublicSignupAllowed())) {
+        // 020 — Registro público SIEMPRE abierto (D2); solo se rechaza el
+        // correo reservado para el super-admin (FR-004). Las altas internas
+        // (equipo, script del operador) no pasan por aquí como usuario final:
+        // igual quedan cubiertas por si algún día un correo reservado llega
+        // por esta ruta.
+        if (ctx.path === "/sign-up/email" && !isInternalSignup()) {
+          const email = (ctx.body as { email?: string } | undefined)?.email;
+          if (typeof email === "string" && isReservedPlatformEmail(email)) {
             throw new APIError("FORBIDDEN", {
-              message:
-                "El registro está cerrado: esta instancia ya tiene su organización",
+              message: "correo_reservado",
             });
           }
         }
@@ -90,18 +91,26 @@ function createAuth() {
       user: {
         create: {
           after: async (user) => {
-            await onUserCreated(user.id, user.name);
+            await onUserCreated(user.id, user.name, {
+              internal: isInternalSignup(),
+            });
           },
         },
       },
       session: {
         create: {
           before: async (session) => {
-            const organizationId = await resolveActiveOrganizationId(
-              session.userId
-            );
+            const membership = await resolveMembership(session.userId);
+            if (membership?.suspendedAt) {
+              throw new APIError("FORBIDDEN", {
+                message: "Tu cuenta está suspendida; contacta a soporte",
+              });
+            }
             return {
-              data: { ...session, activeOrganizationId: organizationId },
+              data: {
+                ...session,
+                activeOrganizationId: membership?.organizationId ?? null,
+              },
             };
           },
         },

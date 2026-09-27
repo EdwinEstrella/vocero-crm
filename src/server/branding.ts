@@ -23,6 +23,12 @@ function parseMetadata(metadata: string | null): Record<string, unknown> {
 /**
  * Marca + a qué organización pertenece.
  *
+ * 020 — Sin sesión (login, layout raíz) NUNCA hay tenant del que sacar la
+ * marca: con N organizaciones, "la primera" sería la de otro negocio
+ * (Constitución I, Principio I). Ese caso es SIEMPRE `DEFAULT_BRANDING`, sin
+ * consultar la base — el fallback `organization limit(1)` queda eliminado
+ * (FR-010/FR-011).
+ *
  * El icono se guarda como archivo en `MEDIA_DIR/{organizationId}/favicon`, así
  * que servirlo necesita el id — y la ruta que lo sirve es pública (el login
  * también tiene pestaña), donde no hay sesión de la que sacarlo.
@@ -30,18 +36,15 @@ function parseMetadata(metadata: string | null): Record<string, unknown> {
 export async function getBrandingContext(
   organizationId?: string | null
 ): Promise<{ organizationId: string | null; branding: Branding }> {
+  if (!organizationId) {
+    return { organizationId: null, branding: DEFAULT_BRANDING };
+  }
   const db = getDb();
-  const rows = organizationId
-    ? await db
-        .select({ id: schema.organization.id, metadata: schema.organization.metadata })
-        .from(schema.organization)
-        .where(eq(schema.organization.id, organizationId))
-        .limit(1)
-    : // Sin sesión (login, layout raíz): la única organización de la instancia.
-      await db
-        .select({ id: schema.organization.id, metadata: schema.organization.metadata })
-        .from(schema.organization)
-        .limit(1);
+  const rows = await db
+    .select({ id: schema.organization.id, metadata: schema.organization.metadata })
+    .from(schema.organization)
+    .where(eq(schema.organization.id, organizationId))
+    .limit(1);
   if (!rows[0]) return { organizationId: null, branding: DEFAULT_BRANDING };
   const meta = parseMetadata(rows[0].metadata);
   return {

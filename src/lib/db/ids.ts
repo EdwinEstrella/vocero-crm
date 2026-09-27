@@ -32,6 +32,11 @@ const prefixes = {
   coexistenceAttempt: "wca",
   coexistenceClaim: "wcc",
   coexistenceDelivery: "wcd",
+  // 020 — plataforma multi-tenant
+  platformAuditEvent: "pae",
+  impersonation: "imp",
+  botApiKey: "bak",
+  smbSyncRequest: "wss",
 } as const;
 
 export type IdKind = keyof typeof prefixes;

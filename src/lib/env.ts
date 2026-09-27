@@ -52,12 +52,20 @@ const envSchema = z.object({
     .url()
     .default("https://www.googleapis.com/calendar/v3"),
   GOOGLE_OAUTH_BASE_URL: z.string().url().default("https://oauth2.googleapis.com"),
-  ALLOW_SIGNUP: z.string().optional(),
   AGENT_COALESCE_MS: z.coerce.number().int().min(0).default(6000),
   WA_MOCK_ENABLED: z.string().optional(),
-  // API key de un cerebro externo que conduzca la conversación por /api/bot/*.
-  // Sin ella, toda esa superficie responde 401.
+  // 020 — RETIRADA: cada organización tiene su propia clave, generada en
+  // Ajustes → API (ver src/server/bot/keys.ts). Esta variable global YA NO SE
+  // ACEPTA — /api/bot/* la trata como cualquier clave desconocida (401). Si
+  // sigue definida al arrancar, el servidor solo deja un aviso de migración en
+  // el log (src/instrumentation-node.ts), sin imprimir su valor.
   BOT_API_KEY: z.string().optional(),
+  // 020 — Super-administradores de la plataforma: correos separados por coma
+  // (sin distinguir mayúsculas). Solo entra quien tenga sesión, su correo en
+  // esta lista Y `email_verified = true` — y eso último SOLO lo pone
+  // `scripts/platform-admin.mjs` (acceso al servidor). Sin esta variable,
+  // nadie es super-admin y /admin + /api/platform/* responden 404 a todos.
+  PLATFORM_ADMIN_EMAILS: z.string().optional(),
   // «Quién responde a tus clientes»: el /health del cerebro externo (Nea),
   // consultado desde el servidor. Ej.: http://nea:8000/health (alias de la
   // red de Coolify). Sin ella, la tarjeta del Agente no pregunta a nadie.
@@ -125,6 +133,21 @@ export function isMockEnabled(): boolean {
 export function isAiConfigured(): boolean {
   const token = process.env.OPENROUTER_API_TOKEN;
   return typeof token === "string" && token.trim().length > 0;
+}
+
+/**
+ * 020 — La lista de super-admins que puso el operador: separada por comas,
+ * recortada y en minúsculas. Ausente o vacía = nadie es super-admin (no hay
+ * "primer arranque" especial).
+ */
+export function parsePlatformAdminEmails(
+  raw: string | undefined = process.env.PLATFORM_ADMIN_EMAILS
+): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter((email) => email.length > 0);
 }
 
 export type WhatsappEmbeddedSignupAvailability = {

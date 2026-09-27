@@ -82,6 +82,15 @@ export const organization = pgTable("organization", {
   logo: text("logo"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   metadata: text("metadata"),
+  /**
+   * 020 — Plataforma multi-tenant: el super-admin suspendió esta
+   * organización. NULL = activa. Cuando está fijado, la sesión de sus
+   * miembros se rechaza y los webhooks entrantes (salvo `account_update`) se
+   * descartan.
+   */
+  suspendedAt: timestamp("suspended_at"),
+  /** Motivo de la suspensión; solo lo ve el super-admin. */
+  suspendedReason: text("suspended_reason"),
 });
 
 export const member = pgTable("member", {
@@ -149,14 +158,20 @@ export const contact = pgTable(
      * Quién puso este nombre.
      *
      * `perfil` = lo trajo WhatsApp y puede seguir actualizandose solo;
-     * `manual` = lo escribio una persona en el CRM y NADIE lo pisa.
+     * `manual` = lo escribio una persona en el CRM y NADIE lo pisa;
+     * `libreta` (020) = lo trajo la sincronización de contactos de coexistence
+     * (`smb_app_state_sync`, acción `add`).
+     *
+     * Precedencia: `manual > libreta > perfil` — el nombre de perfil de un
+     * mensaje posterior nunca pisa el de la libreta, y ninguno de los dos pisa
+     * un nombre manual.
      *
      * Existe porque las dos cosas se necesitan a la vez: un contacto que
      * cambia su nombre de WhatsApp tiene que reflejarse (#51), y el operador
      * que renombro a alguien como "Juan - obra Polanco" no puede perder ese
      * trabajo con el siguiente mensaje.
      */
-    nameSource: text("name_source", { enum: ["perfil", "manual"] })
+    nameSource: text("name_source", { enum: ["perfil", "manual", "libreta"] })
       .notNull()
       .default("perfil"),
     notes: text("notes"),
@@ -555,6 +570,8 @@ export const whatsappCoexistenceClaim = pgTable(
     tokenIv: text("token_iv").notNull(),
     tokenTag: text("token_tag").notNull(),
     status: text("status", { enum: ["awaiting_confirmation", "active", "rejected", "revoked", "disconnected"] }).notNull().default("awaiting_confirmation"),
+    /** 020 — cuándo pasó a `active`; ancla la ventana de 24h de sincronización (FR-043/044). */
+    activatedAt: timestamp("activated_at"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -1129,4 +1146,140 @@ export const capiSettings = pgTable(
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (t) => [uniqueIndex("capi_settings_org_uq").on(t.organizationId)]
+);
+
+/* ============================================================
+ * 020 — Plataforma multi-tenant
+ * ============================================================ */
+
+/**
+ * Auditoría de plataforma: quién (super-admin) hizo qué a qué organización.
+ * NO es una tabla de dominio (Complexity Tracking del plan): debe sobrevivir
+ * al borrado de la organización que audita, así que `organizationId` NO
+ * lleva FK cascade. `actorUserId` tampoco lleva FK: el borrado de un usuario
+ * (que no debería pasar para un super-admin) no puede borrar su rastro.
+ */
+export const platformAuditEvent = pgTable(
+  "platform_audit_event",
+  {
+    id: text("id").primaryKey(),
+    actorUserId: text("actor_user_id").notNull(),
+    actorEmail: text("actor_email").notNull(),
+    action: text("action", {
+      enum: [
+        "org_suspended",
+        "org_reactivated",
+        "org_deleted",
+        "impersonation_started",
+        "impersonation_ended",
+      ],
+    }).notNull(),
+    /** Sin FK: la organización puede ya no existir (borrado). */
+    organizationId: text("organization_id").notNull(),
+    /** Copiado al momento del evento: sobrevive al borrado o renombre. */
+    organizationName: text("organization_name").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("pae_org_created_idx").on(t.organizationId, t.createdAt),
+    index("pae_created_idx").on(t.createdAt),
+  ]
+);
+
+/**
+ * Suplantación de organización (E6): sesión de soporte ligada a la sesión de
+ * Better Auth del admin, nunca al plugin `admin` (R5 del plan: ese suplanta
+ * usuarios y atribuye las acciones al owner). `organizationId` sin FK: el fin
+ * de la suplantación se registra aunque la organización se borre.
+ */
+export const platformImpersonation = pgTable(
+  "platform_impersonation",
+  {
+    id: text("id").primaryKey(),
+    adminUserId: text("admin_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id").notNull(),
+    /** La sesión de Better Auth del admin: la suplantación muere con ella. */
+    sessionId: text("session_id").notNull(),
+    startedAt: timestamp("started_at").notNull().defaultNow(),
+    expiresAt: timestamp("expires_at").notNull(),
+    endedAt: timestamp("ended_at"),
+    endedReason: text("ended_reason", {
+      enum: ["salida", "expirada", "sesion_terminada", "reemplazada", "org_borrada"],
+    }),
+  },
+  (t) => [
+    // A lo mucho una suplantación activa por admin (FR-035).
+    uniqueIndex("imp_admin_active_uq")
+      .on(t.adminUserId)
+      .where(sql`${t.endedAt} is null`),
+    index("imp_org_idx").on(t.organizationId),
+  ]
+);
+
+/** Clave de API del cerebro externo, por organización (D5/FR-020..024). */
+export const botApiKey = pgTable(
+  "bot_api_key",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    /** sha256 hex de la clave completa; la clave en claro nunca se guarda. */
+    keyHash: text("key_hash").notNull(),
+    /** Últimos 4 caracteres, solo para mostrar en Ajustes. */
+    last4: text("last4").notNull(),
+    createdByUserId: text("created_by_user_id").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    /** Como mucho una escritura por minuto (contrato api-key.md). */
+    lastUsedAt: timestamp("last_used_at"),
+    revokedAt: timestamp("revoked_at"),
+  },
+  (t) => [
+    uniqueIndex("bot_api_key_hash_uq").on(t.keyHash),
+    // Máximo una clave activa por organización (FR-020).
+    uniqueIndex("bot_api_key_org_active_uq")
+      .on(t.organizationId)
+      .where(sql`${t.revokedAt} is null`),
+  ]
+);
+
+/**
+ * Petición de sincronización SMB (D7/FR-043..044): una fila por
+ * (organización, número, tipo), reclamada ANTES de llamar a Meta para que la
+ * confirmación repetida del webhook nunca dispare una segunda petición.
+ */
+export const whatsappSmbSyncRequest = pgTable(
+  "whatsapp_smb_sync_request",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    phoneNumberId: text("phone_number_id").notNull(),
+    syncType: text("sync_type", { enum: ["smb_app_state_sync", "history"] }).notNull(),
+    status: text("status", {
+      enum: ["pending", "requested", "failed", "declined", "expired"],
+    })
+      .notNull()
+      .default("pending"),
+    requestId: text("request_id"),
+    /** Motivo redactado; jamás el error crudo de Meta con datos del negocio. */
+    error: text("error"),
+    itemsReceived: integer("items_received").notNull().default(0),
+    /** Porcentaje de progreso reportado por Meta para `history`; null en `smb_app_state_sync`. */
+    progress: integer("progress"),
+    windowExpiresAt: timestamp("window_expires_at").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("smb_sync_org_phone_type_uq").on(
+      t.organizationId,
+      t.phoneNumberId,
+      t.syncType
+    ),
+  ]
 );

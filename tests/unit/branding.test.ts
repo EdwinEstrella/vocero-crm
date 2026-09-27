@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ACCENT_PRESETS,
   accentCssVariables,
@@ -205,6 +205,38 @@ describe("tema oscuro: las superficies se distinguen", () => {
   it("en claro, chips y hover se ven igual que antes", () => {
     expect(claro["--chip-bg"]).toBe(claro["--bg"]);
     expect(claro["--row-hover"]).toBe(claro["--bg-subtle"]);
+  });
+});
+
+describe("020 — getBrandingContext sin sesión nunca lee un tenant", () => {
+  it("sin organizationId → DEFAULT_BRANDING, aunque existan organizaciones con marca propia", async () => {
+    // Una BD que SÍ tiene filas (con marca propia): si el fallback
+    // `organization limit(1)` volviera, esta prueba lo agarraría devolviendo
+    // la marca de "otro-negocio" en vez de la de la plataforma.
+    vi.doMock("@/lib/db", () => ({
+      getDb: () => ({
+        select: () => ({
+          from: () => ({
+            where: () => ({
+              limit: () =>
+                Promise.resolve([
+                  {
+                    id: "org_otro_negocio",
+                    metadata: JSON.stringify({ branding: { name: "Otro negocio" } }),
+                  },
+                ]),
+            }),
+          }),
+        }),
+      }),
+      schema: { organization: {} },
+    }));
+    vi.resetModules();
+    const { getBrandingContext } = await import("@/server/branding");
+    const ctx = await getBrandingContext();
+    expect(ctx).toEqual({ organizationId: null, branding: DEFAULT_BRANDING });
+    vi.doUnmock("@/lib/db");
+    vi.resetModules();
   });
 });
 

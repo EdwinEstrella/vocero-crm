@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrainHealthDto } from "@/lib/brain-status";
 import {
   externalAnswerLabel,
@@ -10,7 +10,7 @@ import {
   haceCuanto,
 } from "@/lib/brain-status";
 import { resetRateLimit } from "@/lib/rate-limit";
-import { isBotKeyConfigured, requireBotKey } from "@/server/bot/auth";
+import { requireBotKey } from "@/server/bot/auth";
 import {
   BRAIN_HEALTH_TTL_MS,
   EXTERNAL_SEEN_WINDOW_MS,
@@ -22,6 +22,35 @@ import {
   resetBrainStatusState,
   type BrainStatusInput,
 } from "@/server/bot/status";
+
+/** 020 — la clave es POR ORGANIZACIÓN; ver `bot-keys.test.ts` y `bot-gateway.test.ts`. */
+const botKeyState = vi.hoisted(() => ({
+  keys: new Map<string, { organizationId: string; keyId: string }>(),
+  lastResolvedOrg: null as string | null,
+}));
+
+vi.mock("@/server/bot/keys", () => ({
+  resolveBotKey: async (raw: string) => {
+    const hit = botKeyState.keys.get(raw) ?? null;
+    botKeyState.lastResolvedOrg = hit?.organizationId ?? null;
+    return hit;
+  },
+  touchBotKeyLastUsed: async () => {},
+}));
+
+vi.mock("@/lib/db", () => ({
+  getDb: () => ({
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          limit: async () =>
+            botKeyState.lastResolvedOrg ? [{ suspendedAt: null }] : [],
+        }),
+      }),
+    }),
+  }),
+  schema: { organization: { id: "id", suspendedAt: "suspended_at" } },
+}));
 
 /**
  * «Quién responde a tus clientes». Lo que se protege: que el dueño sepa si
@@ -198,41 +227,39 @@ describe("textos compartidos", () => {
   });
 });
 
-describe("la última llamada del cerebro externo (requireBotKey)", () => {
-  const KEY = "clave-de-servicio-larga-0123456789abcdef";
+describe("la última llamada del cerebro externo (requireBotKey), por organización", () => {
+  const KEY = "vk_org_1_0123456789abcdef0123456789abcdef";
   const req = (key?: string) =>
     new Request("http://localhost/api/bot/context", {
       headers: key ? { "x-api-key": key } : {},
     });
 
   beforeEach(() => {
-    vi.stubEnv("BOT_API_KEY", KEY);
+    botKeyState.keys.clear();
+    botKeyState.keys.set(KEY, { organizationId: "org_1", keyId: "bak_1" });
     resetRateLimit();
     resetBrainStatusState();
   });
-  afterEach(() => vi.unstubAllEnvs());
 
-  it("solo una llamada autenticada la anota", () => {
-    expect(botLastSeenAt()).toBeNull();
-    expect(requireBotKey(req())?.status).toBe(401);
-    expect(requireBotKey(req("otra-clave-igual-de-larga-pero-mala!!"))?.status).toBe(401);
-    expect(botLastSeenAt()).toBeNull();
+  it("solo una llamada autenticada la anota, con la organización que resolvió", async () => {
+    expect(botLastSeenAt("org_1")).toBeNull();
+    const rechazo1 = await requireBotKey(req());
+    expect(rechazo1 instanceof Response && rechazo1.status).toBe(401);
+    const rechazo2 = await requireBotKey(req("otra-clave-que-no-existe"));
+    expect(rechazo2 instanceof Response && rechazo2.status).toBe(401);
+    expect(botLastSeenAt("org_1")).toBeNull();
+
     const antes = Date.now();
-    expect(requireBotKey(req(KEY))).toBeNull();
-    expect(botLastSeenAt()!.getTime()).toBeGreaterThanOrEqual(antes);
+    const gate = await requireBotKey(req(KEY));
+    expect(gate).not.toBeInstanceOf(Response);
+    expect(botLastSeenAt("org_1")!.getTime()).toBeGreaterThanOrEqual(antes);
   });
 
-  it("vive en memoria del proceso (compartida entre rutas)", () => {
-    markBotSeen(HACE_3_MIN.getTime());
-    expect(botLastSeenAt()?.toISOString()).toBe(HACE_3_MIN.toISOString());
-  });
-
-  it("una key corta equivale a no tener llave", () => {
-    expect(isBotKeyConfigured()).toBe(true);
-    vi.stubEnv("BOT_API_KEY", "corta");
-    expect(isBotKeyConfigured()).toBe(false);
-    vi.stubEnv("BOT_API_KEY", "");
-    expect(isBotKeyConfigured()).toBe(false);
+  it("vive en memoria del proceso (compartida entre rutas), por organización", () => {
+    markBotSeen("org_1", HACE_3_MIN.getTime());
+    expect(botLastSeenAt("org_1")?.toISOString()).toBe(HACE_3_MIN.toISOString());
+    // Otra organización no se ve afectada (FR-012: aislamiento del estado en memoria).
+    expect(botLastSeenAt("org_2")).toBeNull();
   });
 });
 

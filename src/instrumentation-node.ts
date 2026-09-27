@@ -63,6 +63,21 @@ export async function cleanupOrphanRuns(): Promise<void> {
   }
 }
 
+/**
+ * 020 (E1/FR-023) — `BOT_API_KEY` (una clave global por variable de entorno)
+ * ya NO se acepta: con N organizaciones no hay "la" instancia a la que
+ * asignársela. Solo se avisa en el log, sin imprimir su valor — el operador
+ * debe migrar a la clave por organización de Ajustes → API.
+ */
+export function warnIfLegacyBotApiKeyConfigured(): void {
+  if (process.env.BOT_API_KEY) {
+    console.warn(
+      "[boot] BOT_API_KEY está definida pero ya NO se acepta (020): genera la " +
+        "clave de cada organización en Ajustes → API y retira esta variable."
+    );
+  }
+}
+
 /** One bounded in-process coexistence drain per process; failures stay observable in the inbox. */
 export function startCoexistenceWorker(): void {
   if (!isWhatsappEmbeddedSignupEnabled()) return;
