@@ -30,7 +30,12 @@ export const GET = withAuth(async (session) => {
         configId: getEnv().META_EMBEDDED_SIGNUP_CONFIG_ID!,
       }
     : null;
-  if (!creds) return Response.json({ connection: null, coexistence, embeddedSignup, coexistenceSetup });
+  // Platform-managed mode: the operator owns the app-level webhook, so tenants
+  // never need (nor should see) the webhook secret or the manual setup path.
+  const platformManaged = embeddedSignupEnabled;
+  if (!creds) {
+    return Response.json({ connection: null, coexistence, embeddedSignup, coexistenceSetup, platformManaged });
+  }
   return Response.json({
     connection: {
       wabaId: creds.wabaId,
@@ -43,6 +48,7 @@ export const GET = withAuth(async (session) => {
     coexistence,
     embeddedSignup,
     coexistenceSetup,
+    platformManaged,
   });
 });
 

@@ -1,5 +1,5 @@
 import { withAuth } from "@/lib/api";
-import { getEnv } from "@/lib/env";
+import { getEnv, isWhatsappEmbeddedSignupEnabled } from "@/lib/env";
 import { isChannelEnabled } from "@/server/channels/enabled";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +14,10 @@ export const dynamic = "force-dynamic";
  * canal apagado van en null: no existen en esta instancia (ADR-001).
  */
 export const GET = withAuth(async () => {
+  // Platform-managed (Embedded Signup) instances are multi-tenant: the webhook
+  // is configured once by the operator at the Meta app level, so its secret
+  // segment and verify token are never handed to tenants.
+  if (isWhatsappEmbeddedSignupEnabled()) return new Response(null, { status: 404 });
   const env = getEnv();
   const base = env.APP_BASE_URL.replace(/\/$/, "");
   const url = `${base}/api/webhooks/wa/${env.META_WEBHOOK_VERIFY_TOKEN}`;

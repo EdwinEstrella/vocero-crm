@@ -86,6 +86,7 @@ export function WhatsappWizard() {
   const [embeddedSignup, setEmbeddedSignup] = useState<EmbeddedSignup | null>(null);
   const [coexistence, setCoexistence] = useState<CoexistenceStatus | null>(null);
   const [coexistenceSetup, setCoexistenceSetup] = useState<CoexistenceSetup | null>(null);
+  const [platformManaged, setPlatformManaged] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
   const refetch = useCallback(async () => {
@@ -98,6 +99,7 @@ export function WhatsappWizard() {
       setEmbeddedSignup(c.embeddedSignup ?? null);
       setCoexistence(c.coexistence ?? null);
       setCoexistenceSetup(c.coexistenceSetup ?? null);
+      setPlatformManaged(Boolean(c.platformManaged));
     }
     if (w) setWebhook(w);
     setLoaded(true);
@@ -156,9 +158,20 @@ export function WhatsappWizard() {
         <CoexistenceUnavailableCard setup={coexistenceSetup} />
       )}
 
-      <ConnectForm existing={connection} onSaved={() => void refetch()} />
+      {platformManaged ? (
+        <details className="rounded-lg border p-4">
+          <summary className="cursor-pointer text-sm font-medium">
+            Conexión manual con credenciales de Cloud API (avanzado)
+          </summary>
+          <div className="mt-4">
+            <ConnectForm existing={connection} onSaved={() => void refetch()} />
+          </div>
+        </details>
+      ) : (
+        <ConnectForm existing={connection} onSaved={() => void refetch()} />
+      )}
 
-      {webhook && <WebhookCard webhook={webhook} />}
+      {!platformManaged && webhook && <WebhookCard webhook={webhook} />}
     </div>
   );
 }
