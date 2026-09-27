@@ -1,9 +1,11 @@
 # Vocero CRM — Guía para Claude
 
 Vocero es un CRM de WhatsApp open source (MIT), self-hosted, con agente de IA y
-Laboratorio de auto-evaluación. Una instancia = un negocio. Este archivo guía a
-Claude Code (u otro asistente) para operar y **modificar** este repositorio —
-el caso típico: una agencia adaptando Vocero para un cliente.
+Laboratorio de auto-evaluación. Un despliegue = una plataforma multi-tenant:
+cada negocio se registra solo, crea SU organización y queda aislado de los
+demás (constitución 2.0.0, spec 020). Este archivo guía a Claude Code (u otro
+asistente) para operar y **modificar** este repositorio — el caso típico: una
+agencia adaptando Vocero para operarlo como plataforma.
 
 ## Stack
 
@@ -37,12 +39,15 @@ externas: el trabajo en segundo plano (agente, Laboratorio) es in-process.
 | Campos/tablas | `src/lib/db/schema.ts` → `pnpm db:generate` → migración nueva en `drizzle/` |
 | La ingesta/envío de mensajes | `src/server/inbox/` (ingest idempotente, send con guard de sandbox, ventana 24h) |
 | Cómo se identifica a un contacto | `src/server/inbox/identity.ts` (teléfono normalizado o `bsuid:<id>`) |
-| Conectar TU propio bot en vez del agente | `src/app/api/bot/*` + `src/server/bot/auth.ts` (X-API-Key) · quién responde (agente incluido, cerebro externo, doble respuesta): `src/server/bot/status.ts` + `GET /api/agent/brain-status` |
+| Conectar TU propio bot en vez del agente | `src/app/api/bot/*` + `src/server/bot/auth.ts` (X-API-Key por organización; la key resuelve el tenant) · quién responde (agente incluido, cerebro externo, doble respuesta): `src/server/bot/status.ts` + `GET /api/agent/brain-status` |
 | La agenda (horarios, huecos, citas) | `src/server/agenda/` — detrás de la bandera `AGENDA` (`flag.ts`) |
 | Cómo se entrega la reunión (Zoom, Meet…) | `src/server/agenda/connectors/` + catálogo en `src/lib/agenda-connectors.ts` · guía: [docs/agenda-conectores.md](docs/agenda-conectores.md) |
 | De qué anuncio llegó cada conversación (siempre visible) | `src/server/attribution/referral.ts` (normalización) · `creativo.ts` (copia de la imagen, solo hosts de Meta) · `store.ts` · tarjeta en `src/components/anuncio-origen.tsx` |
 | Los números de Resultados (ventas, agente, origen y anuncios, higiene) | `src/server/analytics/` (un módulo por sección; periodo en la zona del negocio en `period.ts`; exclusión del Laboratorio en `shared.ts`) · contratos y tasas en `src/lib/analytics.ts` · UI en `src/components/results/` · spec [019](specs/019-resultados/spec.md) |
 | La atribución de anuncios y el reporte a Meta | `src/server/attribution/` — el `ctwa_clid`, la CAPI y Ajustes → Anuncios detrás de la bandera `ATRIBUCION` (`flag.ts`) + `src/lib/meta/capi.ts` · guía: [docs/atribucion-capi.md](docs/atribucion-capi.md) |
+| Las claves de API del cerebro externo (una por organización, hash sha256) | `src/server/bot/keys.ts` + `src/app/api/settings/api-key/` + Ajustes → API |
+| El panel del super-admin (listar, suspender, borrar, suplantar organizaciones) | `src/app/(platform)/admin/` + `src/app/api/platform/*` + `src/server/platform/` (gate por `PLATFORM_ADMIN_EMAILS`, único módulo con lectura entre tenants) |
+| La sincronización de contactos/historial al conectar (coexistence) | `src/server/whatsapp/smb-sync.ts` + `src/server/whatsapp/sync-worker.ts` |
 | UI | `src/components/` + `src/app/(app)/` |
 
 Los mocks del entorno de pruebas viven en `src/app/api/dev/` (wa-mock +
@@ -54,12 +59,14 @@ User IDs, así que `from` puede no venir. La llave estable es
 `contact.wa_identity` (teléfono normalizado 521→52, o `bsuid:<id>`); `phone` es
 un atributo OPCIONAL. Nunca asumas que un contacto tiene teléfono.
 
-**Cerebro externo**: `/api/bot/*` (autenticada por `BOT_API_KEY`) deja que un
+**Cerebro externo**: `/api/bot/*` (autenticada por la clave de API de CADA
+organización, generada en Ajustes → API; la `BOT_API_KEY` global ya no se
+acepta) deja que un
 microservicio propio conduzca la conversación sin que el token de WhatsApp
 salga del CRM: marcar leído + "escribiendo…", descargar adjuntos y reiniciar la
 conversación de pruebas. Respeta `conversation.ai_enabled`/`handoff_at` igual
-que el agente in-process. Sin la key, esa superficie responde 401 y el CRM
-funciona igual.
+que el agente in-process. Sin una key válida, esa superficie responde 401 y el
+CRM funciona igual.
 
 ## Reglas de la constitución (no negociables)
 
@@ -75,8 +82,13 @@ Ver [.specify/memory/constitution.md](.specify/memory/constitution.md).
   apagado y encendido. Auth y BD self-hosted.
 - **Seguridad (I)**: secretos cifrados en reposo (AES-256-GCM, `lib/crypto`);
   jamás al cliente ni a logs. El token de WhatsApp solo muestra sus últimos 4.
-- **Multi-tenancy (III)**: `organization_id` NOT NULL en toda tabla de dominio;
-  toda query pasa por `scoped()` de `src/lib/db/tenant.ts`.
+- **Multi-tenancy (I + III, 2.0.0)**: siempre multi-tenant. `organization_id`
+  NOT NULL en toda tabla de dominio; toda query pasa por `scoped()` de
+  `src/lib/db/tenant.ts`. Ningún código resuelve "la" organización sin un tenant
+  derivado de la petición (sesión, key de API, `phone_number_id`): prohibido
+  `from(organization).limit(1)`. Registro público abierto: cada alta crea SU
+  organización; las cuentas de equipo se unen a la del owner. Super-admin por
+  `PLATFORM_ADMIN_EMAILS`; toda suplantación queda auditada.
 - **Idempotencia (IV)**: webhooks dedup por `wa_message_id` UNIQUE; estados
   monotónicos; seeds y migraciones re-ejecutables.
 - **Sandbox del Laboratorio**: las conversaciones `is_test` JAMÁS tocan la API

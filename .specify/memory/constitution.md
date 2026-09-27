@@ -1,6 +1,68 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Versión: 1.4.0 → 2.0.0
+
+Cambios:
+  - Preámbulo → REDEFINIDO: "una instancia = un negocio" pasa a "un despliegue
+    = una plataforma que sirve a muchos negocios (organizaciones), cada uno
+    aislado". El despliegue es SIEMPRE multi-tenant; no hay bandera ni modo
+    "una sola organización".
+  - Principio I "Seguridad de Datos Primero" → el aislamiento entre tenants deja
+    de ser condicional ("si el producto es multi-tenant") y pasa a ser carga
+    estructural: ningún camino de código resuelve "la" organización sin un
+    tenant derivado de la petición (sesión, clave de API por organización,
+    `phone_number_id` del webhook). Se prohíben los fallbacks tipo
+    `select … from organization limit 1`.
+  - Principio II "Soberanía" → aclaración de alcance: "cada instancia" pasa a
+    "cada organización" en la condición 4 de conectores; se reconoce la App de
+    Meta del operador (Embedded Signup) como el camino de alta del canal. La
+    lista cerrada de dependencias NO cambia.
+  - Principio III "Multi-Tenancy Real" → la frase "En Vocero cada instancia
+    sirve a UN negocio" se reemplaza: el despliegue sirve a N organizaciones y
+    cada usuario pertenece a exactamente una.
+  - Principio VIII "Foco Vertical" → se elimina la exclusión de
+    "multi-instancia/plataforma centralizada". Billing y planes SIGUEN FUERA.
+  - Principios IV, V, VI, VII y IX: íntegros (sin cambio).
+  - "Restricciones de Plataforma y Seguridad" → registro público abierto (cada
+    alta crea su propia organización; se elimina "el registro se cierra tras la
+    primera organización"); nuevo rol de super-administrador de plataforma
+    definido por el operador (`PLATFORM_ADMIN_EMAILS`); la suplantación de
+    soporte se audita; la lectura entre tenants solo existe en el módulo de
+    plataforma tras el gate de super-admin.
+  - Governance: sin cambio.
+
+Bump: MAJOR (1.4.0 → 2.0.0) — redefinición incompatible del preámbulo y del
+Principio VIII (el producto deja de ser "una instancia = un negocio"), y
+eliminación de la regla de registro cerrado. Una instancia 1.x con una sola
+organización sigue funcionando, pero su contrato cambia: el registro queda
+abierto y la clave global `BOT_API_KEY` deja de aceptarse (ver spec 020).
+
+Motivación:
+  Decisión del dueño (2026-09-27): Vocero opera como plataforma multi-tenant en
+  la que cada negocio se registra solo, conecta su WhatsApp por Embedded Signup
+  (coexistence, ya implementado en 0015) y queda aislado del resto. Operar un
+  VPS por cliente no escala para la agencia y el modelo de datos ya era
+  multi-tenant real desde 1.0 (Principio III). Lo que faltaba era retirar las
+  suposiciones de "organización única" del código y de esta constitución.
+  Plan durable: specs/020-plataforma-multitenant/.
+
+Plantillas dependientes:
+  - .specify/templates/spec-template.md — ✅ compatible (sin cambios).
+  - .specify/templates/plan-template.md — ✅ compatible; el Constitution Check
+    evalúa ahora el aislamiento del Principio I como carga estructural.
+  - .specify/templates/tasks-template.md — ✅ compatible.
+  - CLAUDE.md — ✅ actualizado en este mismo cambio (intro, mapa, reglas).
+
+TODOs diferidos:
+  - Billing/planes: fuera de alcance por decisión explícita; requeriría una
+    nueva enmienda (Principio II lo prohíbe como dependencia del núcleo).
+  - Deuda documental heredada de la 1.3.0: sin cambio.
+-->
+
+<!--
+SYNC IMPACT REPORT (histórico)
+==============================
 Versión: 1.3.0 → 1.4.0
 
 Cambios:
@@ -53,8 +115,9 @@ TODOs diferidos:
 # Vocero CRM Constitution
 
 Vocero CRM es un CRM de WhatsApp con agente de IA, open source (MIT), self-hosted y
-gratuito, diseñado para que las agencias de IA lo desplieguen en el VPS de sus
-clientes: una instancia = un negocio. Esta constitución define las reglas no
+gratuito, diseñado para que una agencia lo despliegue como plataforma: un
+despliegue sirve a muchos negocios (organizaciones), cada uno aislado de los
+demás, que se registran solos y conectan su propio WhatsApp. Esta constitución define las reglas no
 negociables del producto. Aplica a todas las fases del flujo de trabajo (specify,
 plan, tasks, implement). Cualquier conflicto entre una decisión de implementación y
 esta constitución SE RESUELVE A FAVOR de esta constitución.
@@ -70,9 +133,13 @@ velocidad de entrega o conveniencia de desarrollo.
   app, respuestas de API) ni se escriben en logs, trazas o mensajes de error.
 - Todo secreto se almacena cifrado en reposo. Las claves de cifrado se gestionan
   fuera del código fuente y fuera del control de versiones.
-- Si el producto es multi-tenant, todo dato de un tenant está aislado de los demás:
-  ninguna consulta, endpoint o tarea en segundo plano debe devolver o modificar datos
+- El producto es multi-tenant: todo dato de un tenant está aislado de los demás.
+  Ninguna consulta, endpoint o tarea en segundo plano debe devolver o modificar datos
   de un tenant distinto al del solicitante. El aislamiento se aplica por defecto.
+- Ningún camino de código resuelve "la" organización sin un tenant derivado de la
+  petición (sesión, clave de API por organización, `phone_number_id` del webhook).
+  Quedan PROHIBIDOS los fallbacks del tipo `select … from organization limit 1`: con
+  N organizaciones, "la primera" es la de otro.
 
 **Rationale**: Una fuga de credenciales o un cruce de datos entre clientes es un
 fallo catastrófico e irreversible; prevenirlo siempre cuesta menos que remediarlo.
@@ -101,8 +168,8 @@ dependencias externas en runtime es CERRADA:
         definida — NUNCA bloquea ni pierde la operación core (la cita se crea
         con link pendiente; el mensaje se responde; el dato se guarda).
      4. **Credenciales del propio negocio, cifradas en reposo** (Principio I):
-        cada instancia habla con SU cuenta del proveedor; jamás credenciales de
-        una plataforma central.
+        cada organización habla con SU cuenta del proveedor; jamás credenciales
+        compartidas entre organizaciones.
      5. **Verificables apagados y encendidos**: la CI ejercita ambas
         configuraciones y cada conector externo tiene mock con camino infeliz.
 - **PROHIBIDO como dependencia del núcleo** (todo lo que el producto necesite
@@ -116,6 +183,9 @@ dependencias externas en runtime es CERRADA:
   Auth + PostgreSQL propios de la instancia).
 - Las integraciones externas permitidas se aíslan tras adaptadores dedicados
   (cliente Graph API propio; adaptador LLM) para no acoplar el dominio a ellas.
+- El alta del canal de cada organización pasa por la App de Meta del operador
+  (Embedded Signup / coexistence); el token resultante es del negocio, se cifra y
+  solo lo usa esa organización.
 
 **Rationale**: El producto se regala para que agencias lo desplieguen en VPS de
 clientes; cada dependencia externa adicional es un costo, un punto de fallo y una
@@ -124,9 +194,8 @@ fuga de soberanía que rompe la promesa "gratis y tuyo".
 ### III. Multi-Tenancy Real
 
 El sistema sirve a organizaciones independientes desde una sola instancia lógica.
-En Vocero cada instancia sirve a UN negocio, pero el modelo de datos es
-multi-tenant real (organización del plugin de auth) para mantener el aislamiento
-exigible y no cerrar la puerta a evoluciones.
+Un despliegue de Vocero sirve a N negocios; cada uno es una organización del plugin
+de auth y cada usuario pertenece a exactamente una organización.
 
 - Cada organización (tenant) gestiona sus propios usuarios, roles y permisos.
 - El identificador de tenant (`organization_id`) es un parámetro de primer nivel en
@@ -230,9 +299,10 @@ conversaciones de WhatsApp de UN negocio* se rechaza.
 - WhatsApp Cloud API es el canal; el producto es el CRM. Features de canal que no
   sirvan a atender/organizar/convertir (broadcast masivo, scraping de números,
   flujos visuales genéricos) quedan FUERA del alcance de v1.
-- Toda feature MUST servir a la agencia que despliega o al negocio que opera UNA
-  instancia. Lo que solo sirva a una plataforma centralizada (billing, planes,
-  multi-instancia) queda FUERA.
+- Toda feature MUST servir a la agencia que opera la plataforma o a los negocios
+  que la usan. La operación de la plataforma (alta abierta, suspensión, baja y
+  soporte por parte del super-administrador) está DENTRO; billing y planes siguen
+  FUERA.
 
 **Rationale**: Un foco vertical explícito mantiene el modelo de datos alineado con el
 negocio real y da un criterio claro para aceptar o rechazar alcance.
@@ -283,13 +353,24 @@ Estas restricciones derivan de los Principios I y II y son verificables en revis
   almacenamiento en claro de secretos es una violación.
 - **Frontera de tenant**: la capa de acceso a datos exige el identificador
   de tenant; cualquier acceso que pueda omitirlo requiere justificación explícita.
+  La única lectura entre tenants permitida vive en el módulo de plataforma
+  (`src/server/platform/`), detrás del gate de super-administrador.
+- **Registro público abierto**: cada alta pública crea SU propia organización (rol
+  `owner`) y queda activa de inmediato. Las cuentas de equipo que crea un owner se
+  unen a la organización de ese owner y nunca crean otra.
+- **Super-administrador de plataforma**: lo define el operador por entorno
+  (`PLATFORM_ADMIN_EMAILS`), no un registro ni un rol editable desde la app. El gate
+  es server-side y la superficie de plataforma responde 404 a quien no lo es.
+- **Suplantación auditada**: entrar a una organización como soporte deja registro
+  (quién, a qué organización, inicio y fin), muestra un aviso visible con salida y
+  no otorga poderes de plataforma dentro de esa organización.
 - **Aislamiento de integraciones**: las dependencias de APIs externas se acceden a
   través de adaptadores dedicados (cliente Graph API propio, adaptador LLM
   OpenRouter-compatible), no dispersas por el dominio.
 - **Instancia pública endurecida**: las rutas de mock/desarrollo devuelven 404
-  incondicional en producción; el registro se cierra tras la primera organización
-  (salvo habilitación explícita); los entornos de prueba internos JAMÁS alcanzan la
-  API real de WhatsApp.
+  incondicional en producción; una organización suspendida no inicia sesión, no
+  procesa webhooks entrantes y no ejecuta el agente; los entornos de prueba internos
+  JAMÁS alcanzan la API real de WhatsApp.
 
 ## Flujo de Desarrollo y Puertas de Calidad
 
@@ -334,4 +415,4 @@ práctica, convención o preferencia; ante un conflicto, gana la constitución.
 - **Propagación**: al enmendar la constitución se revisan y, si procede, se actualizan
   las plantillas dependientes (plan, spec, tasks).
 
-**Version**: 1.4.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-08-26
+**Version**: 2.0.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-09-27
