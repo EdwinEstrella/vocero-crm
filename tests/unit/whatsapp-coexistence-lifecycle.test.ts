@@ -3,7 +3,6 @@ import {
   computeRetryAt,
   classifyDeliveryFailure,
   canSendWithCoexistenceStatus,
-  decodeCoexistenceDelivery,
   deliveryEventKey,
   decodeEchoMutation,
   historyMessageIsEligible,
@@ -26,58 +25,6 @@ describe("coexistence lifecycle state machine", () => {
     expect(computeRetryAt(new Date("2026-01-01T00:00:00.000Z"), 99)).toEqual(
       new Date("2026-01-01T01:00:00.000Z")
     );
-  });
-});
-
-describe("fixture-derived coexistence decoder", () => {
-  it("admits only the locked minimal lifecycle shape", () => {
-    expect(
-      decodeCoexistenceDelivery({
-        field: "account_update",
-        value: { metadata: { phone_number_id: "pn_1" }, coexistence: { event: "confirmed" } },
-      })
-    ).toEqual({ kind: "lifecycle", phoneNumberId: "pn_1", event: "confirmed" });
-  });
-
-  it("rejects unknown field and malformed values without guessing Meta mappings", () => {
-    expect(decodeCoexistenceDelivery({ field: "history", value: {} })).toBeNull();
-    expect(
-      decodeCoexistenceDelivery({ field: "smb_message_echoes", value: { metadata: {} } })
-    ).toBeNull();
-  });
-
-  it("admits only fixture-shaped echo and history deliveries", () => {
-    expect(
-      decodeCoexistenceDelivery({
-        field: "smb_message_echoes",
-        value: {
-          metadata: { phone_number_id: "pn_1" },
-          message_echoes: [{ id: "wamid.echo.1", timestamp: "1", type: "text", to: "5215550000000" }],
-        },
-      })
-    ).toEqual({ kind: "echo", phoneNumberId: "pn_1" });
-    expect(
-      decodeCoexistenceDelivery({
-        field: "history",
-        value: {
-          metadata: { phone_number_id: "pn_1" },
-          coexistence: { consented_at: "2026-01-01T00:00:00.000Z" },
-          messages: [{ id: "wamid.history.1", timestamp: "1", type: "text", from: "5215550000000" }],
-        },
-      })
-    ).toEqual({ kind: "history", phoneNumberId: "pn_1" });
-  });
-
-  it("does not admit historical payloads without explicit consent", () => {
-    expect(
-      decodeCoexistenceDelivery({
-        field: "history",
-        value: {
-          metadata: { phone_number_id: "pn_1" },
-          messages: [{ id: "wamid.history.1", timestamp: "1", type: "text", from: "5215550000000" }],
-        },
-      })
-    ).toBeNull();
   });
 
   it("creates a stable tenant-local delivery key without retaining provider payloads", () => {

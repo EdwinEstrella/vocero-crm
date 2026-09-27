@@ -8,6 +8,7 @@ import {
   tokenLast4,
 } from "@/server/whatsapp/credentials";
 import { subscribeAppToWaba, testConnection } from "@/server/whatsapp/connect";
+import { getSyncStatus } from "@/server/whatsapp/smb-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -33,8 +34,11 @@ export const GET = withAuth(async (session) => {
   // Platform-managed mode: the operator owns the app-level webhook, so tenants
   // never need (nor should see) the webhook secret or the manual setup path.
   const platformManaged = embeddedSignupEnabled;
+  // 020 (D7) — Estado de sincronización de contactos/historial (solo aplica a
+  // coexistence; sin claim, ambas quedan null y no se muestra nada).
+  const sync = await getSyncStatus(session.organizationId);
   if (!creds) {
-    return Response.json({ connection: null, coexistence, embeddedSignup, coexistenceSetup, platformManaged });
+    return Response.json({ connection: null, coexistence, embeddedSignup, coexistenceSetup, platformManaged, sync });
   }
   return Response.json({
     connection: {
@@ -49,6 +53,7 @@ export const GET = withAuth(async (session) => {
     embeddedSignup,
     coexistenceSetup,
     platformManaged,
+    sync,
   });
 });
 

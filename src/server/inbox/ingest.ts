@@ -25,6 +25,8 @@ import { registrarAnuncioDeOrigen } from "@/server/attribution/store";
 import { onLeadActivity } from "@/server/inbox/lead-activity";
 import { maybeRunAgentTurn } from "@/server/ai/trigger";
 import { decodeEchoMutation, historyMessageIsEligible } from "@/server/whatsapp/lifecycle";
+import { isOrganizationSuspended } from "@/server/platform/suspension";
+import type { HistoryThread } from "@/server/whatsapp/lifecycle";
 
 /** Tipos de contenido soportados; el resto se ignora sin error. */
 const SUPPORTED_TYPES = new Set([
@@ -231,6 +233,10 @@ export async function processMessagesValue(value: WebhookValue): Promise<void> {
   }
 
   const organizationId = credentials.organizationId;
+  if (await isOrganizationSuspended(organizationId)) {
+    console.warn(`[webhook] org suspendida (${organizationId}): mensajes descartados`);
+    return;
+  }
 
   for (const status of value.statuses ?? []) {
     await applyStatusUpdate(organizationId, status);
@@ -280,6 +286,11 @@ export async function processEchoesValue(value: WebhookValue): Promise<void> {
     return;
   }
 
+  if (await isOrganizationSuspended(credentials.organizationId)) {
+    console.warn(`[webhook] org suspendida (${credentials.organizationId}): echoes descartados`);
+    return;
+  }
+
   // Meta documenta `message_echoes`; parser tolerante a `messages` (R1).
   const echoes = value.message_echoes ?? value.messages ?? [];
   for (const echo of echoes) {
@@ -323,36 +334,56 @@ async function applyEchoMutation(
 
 /**
  * Persists consented historical traffic through identity/upsert primitives only.
- * It deliberately does not update unread counts, timestamps, lead activity, SSE,
- * media downloads, or AI: a history import must never look like live traffic.
+ * It deliberately does not update unread counts, lead activity, media downloads,
+ * or AI: a history import must never look like live traffic. Exactly one
+ * `conversation.updated` refresh is published per batch (never per message).
+ *
+ * Contact of the thread = `threads[].id` (the WhatsApp user's number, per
+ * contracts/webhook-smb.md), normalized. Direction is derived by comparing a
+ * message's `from` against that same number: it never needs the business's
+ * `display_phone_number`, and stays correct even across country-specific trunk
+ * rewrites (`normalizeMx` is applied symmetrically to both sides).
  */
 export async function ingestHistoricalMessages(input: {
   organizationId: string;
-  messages: WebhookMessage[];
-  contacts?: WebhookValue["contacts"];
+  threads: HistoryThread[];
 }): Promise<void> {
   const db = getDb();
-  for (const message of input.messages) {
-    if (!SUPPORTED_TYPES.has(message.type) || !historyMessageIsEligible(message)) continue;
-    const identity = resolveIdentity(message, input.contacts);
-    if (!identity) continue;
-    const { contact } = await getOrCreateContactByIdentity(input.organizationId, identity);
+  let touched = 0;
+  for (const thread of input.threads) {
+    if (!thread.id) continue;
+    const customerPhone = normalizeMx(thread.id);
+    const { contact } = await getOrCreateContactByIdentity(input.organizationId, {
+      identity: customerPhone,
+      phone: customerPhone,
+      waUserId: null,
+      profileName: null,
+    });
     const conversation = await getOrCreateConversation(input.organizationId, contact.id);
-    await db
-      .insert(schema.message)
-      .values({
-        id: newId("message"),
-        organizationId: input.organizationId,
-        conversationId: conversation.id,
-        waMessageId: message.id,
-        direction: "in",
-        type: message.type,
-        text: message.text?.body ?? null,
-        status: "delivered",
-        importSource: "history",
-        waTimestamp: toDate(message.timestamp),
-      })
-      .onConflictDoNothing({ target: [schema.message.waMessageId] });
+    for (const message of thread.messages) {
+      if (!SUPPORTED_TYPES.has(message.type) || !historyMessageIsEligible(message)) continue;
+      const direction = message.from && normalizeMx(message.from) === customerPhone ? "in" : "out";
+      const inserted = await db
+        .insert(schema.message)
+        .values({
+          id: newId("message"),
+          organizationId: input.organizationId,
+          conversationId: conversation.id,
+          waMessageId: message.id,
+          direction,
+          type: message.type,
+          text: message.text?.body ?? null,
+          status: "delivered",
+          importSource: "history",
+          waTimestamp: toDate(message.timestamp),
+        })
+        .onConflictDoNothing({ target: [schema.message.waMessageId] })
+        .returning();
+      if (inserted[0]) touched++;
+    }
+  }
+  if (touched > 0) {
+    publish(input.organizationId, { type: "conversation.updated", data: { conversation: { id: null } } });
   }
 }
 

@@ -172,6 +172,49 @@ export async function POST(req: Request, ctx: Params) {
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
+  // 020 — POST {phoneNumberId}/smb_app_data: pide contactos o historial de
+  // coexistence. `-fail` en el phone_number_id reproduce el camino infeliz
+  // (contrato webhook-smb.md); cada llamada se cuenta para el arnés.
+  if (path.length === 2 && path[1] === "smb_app_data") {
+    const syncType = String(body.sync_type ?? "");
+    if (body.messaging_product !== "whatsapp" || !["smb_app_state_sync", "history"].includes(syncType)) {
+      return Response.json(
+        {
+          error: {
+            message: "Invalid parameter: sync_type",
+            type: "GraphMethodException",
+            code: 100,
+            fbtrace_id: "mock-smb-invalid",
+          },
+        },
+        { status: 400 }
+      );
+    }
+    if (path[0]!.endsWith("-fail")) {
+      return Response.json(
+        {
+          error: {
+            message: "(#1) Unknown error occurred while requesting smb_app_data",
+            type: "OAuthException",
+            code: 1,
+            fbtrace_id: "mock-smb-fail",
+          },
+        },
+        { status: 400 }
+      );
+    }
+    const state = getWaMockState();
+    const requestId = `smbreq_${nextN()}`;
+    state.smbAppDataCalls.push({
+      n: state.smbAppDataCalls.length + 1,
+      phoneNumberId: path[0]!,
+      syncType,
+      requestId,
+      at: new Date().toISOString(),
+    });
+    return Response.json({ messaging_product: "whatsapp", request_id: requestId });
+  }
+
   // 016 — POST {datasetId}/events: Conversions API. Imita las tres cosas que
   // de verdad importan del endpoint real: el catálogo cerrado de nombres, la
   // exigencia del ctwa_clid, y —sobre todo— que Meta puede responder 200

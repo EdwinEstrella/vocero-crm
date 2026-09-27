@@ -86,13 +86,21 @@ org-first existentes; paginada a 50.
   `metadata.phone_number_id` y `value.coexistence.event` (forma de fixture), así
   que un `account_update` real nunca activa un claim. Se enruta por WABA
   (`whatsapp_coexistence_claim.waba_id`) con la tabla de `contracts/webhook-smb.md`.
-  **NEEDS CLARIFICATION (responsable: implementador, tarea T040, antes de T041)**: confirmar
-  con una entrega real de la App de Meta cuál evento llega al completar el alta
-  por coexistence (`PARTNER_ADDED` vs `PARTNER_APP_INSTALLED`) y si
-  `ACCOUNT_RECONNECTED` debe reactivar un claim `disconnected` (hoy los
-  terminales no se reabren: se ignora). Si ninguno llega en un alta real, la
-  sincronización no se dispararía: registrar el payload observado en
-  `research` de este plan y ajustar el mapeo, no la regla de "una sola vez".
+  **Resuelto (T040, decisión del dueño/orquestador, 2026-09-27)**: sin una
+  entrega real observable de la App de Meta a la mano, se fija la regla y se
+  documenta para reabrirla si un payload real la contradice. Un
+  `account_update` con `value.event` en {`PARTNER_ADDED`, `PARTNER_APP_INSTALLED`}
+  confirma un claim `awaiting_confirmation` SOLO cuando `value.waba_info.waba_id`
+  coincide con el `waba_id` de ese claim — el enrutamiento por WABA ya lo
+  garantiza (los claims son por organización: una WABA ajena nunca confirma
+  el claim de otra organización). `ACCOUNT_RECONNECTED` es no-op para el
+  estado del claim (se loguea, sin transición: un terminal sigue sin
+  reabrirse). `PARTNER_REMOVED` / `PARTNER_APP_UNINSTALLED` → `revoked` (la
+  semántica de revocación ya existente: se borran las credenciales usables).
+  Cualquier otro evento no mapeado se trata igual que `ACCOUNT_RECONNECTED`
+  (no-op logueado) — nunca se infiere una transición de un evento nuevo de
+  Meta. Implementado en `decodeAccountUpdate`
+  (`src/server/whatsapp/lifecycle.ts`).
 - **R4 — Alcance de la ventana de 24 h**. Se ancla a `activated_at` del claim
   (momento en que pasa a `active`), no al alta de la organización. Si Meta la
   ancla antes (fin del flujo Embedded Signup), la ventana real es menor: por eso
@@ -187,7 +195,7 @@ solo por el buzón durable (nunca por `after()`).
 | **IV. Idempotencia** | Petición de sync reclamada por UNIQUE antes de llamar; reintento con UPDATE condicional; `state_sync` por upsert; `history` por `wa_message_id`; suspender/reactivar/revocar idempotentes. Migración re-ejecutable. |
 | **V. Calidad** | Gate técnico + unit de gates y decodificadores + arnés E2E. |
 | **VI. Specs antes de código** | Ciclo completo; spec, plan, contratos y enmienda preceden al código. |
-| **VII. Trazabilidad** | E1–E9 en la spec; R3 marcado NEEDS CLARIFICATION con responsable. |
+| **VII. Trazabilidad** | E1–E9 en la spec; R3 resuelto en T040 (decisión documentada arriba). |
 | **VIII. Foco** | Operación de plataforma explícitamente dentro en 2.0.0; billing fuera. |
 | **IX. Verificación en vivo** | Arnés contra la app viva con wa-mock: dos organizaciones, panel, sync. |
 

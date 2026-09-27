@@ -47,6 +47,26 @@ type CoexistenceSetup = {
   missing: string[];
 };
 
+type SyncRequestView = {
+  status: "pending" | "requested" | "failed" | "declined" | "expired";
+  progress: number | null;
+  windowExpiresAt: string;
+  error: string | null;
+};
+
+type SyncStatus = {
+  contacts: SyncRequestView | null;
+  history: SyncRequestView | null;
+};
+
+const SYNC_STATUS_LABEL: Record<SyncRequestView["status"], string> = {
+  pending: "En curso",
+  requested: "En curso",
+  failed: "Falló",
+  declined: "El negocio no autorizó la sincronización",
+  expired: "La ventana de 24 horas venció",
+};
+
 type FacebookSdk = {
   init: (options: { appId: string; cookie: boolean; xfbml: boolean; version: string }) => void;
   login: (
@@ -87,6 +107,7 @@ export function WhatsappWizard() {
   const [coexistence, setCoexistence] = useState<CoexistenceStatus | null>(null);
   const [coexistenceSetup, setCoexistenceSetup] = useState<CoexistenceSetup | null>(null);
   const [platformManaged, setPlatformManaged] = useState(false);
+  const [sync, setSync] = useState<SyncStatus | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   const refetch = useCallback(async () => {
@@ -100,6 +121,7 @@ export function WhatsappWizard() {
       setCoexistence(c.coexistence ?? null);
       setCoexistenceSetup(c.coexistenceSetup ?? null);
       setPlatformManaged(Boolean(c.platformManaged));
+      setSync(c.sync ?? null);
     }
     if (w) setWebhook(w);
     setLoaded(true);
@@ -158,6 +180,10 @@ export function WhatsappWizard() {
         <CoexistenceUnavailableCard setup={coexistenceSetup} />
       )}
 
+      {sync && (sync.contacts || sync.history) && (
+        <SyncStatusCard sync={sync} onChanged={() => void refetch()} />
+      )}
+
       {platformManaged ? (
         <details className="rounded-lg border p-4">
           <summary className="cursor-pointer text-sm font-medium">
@@ -173,6 +199,71 @@ export function WhatsappWizard() {
 
       {!platformManaged && webhook && <WebhookCard webhook={webhook} />}
     </div>
+  );
+}
+
+function SyncStatusCard({
+  sync,
+  onChanged,
+}: {
+  sync: SyncStatus;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState<"smb_app_state_sync" | "history" | null>(null);
+
+  async function retry(type: "smb_app_state_sync" | "history") {
+    setBusy(type);
+    try {
+      const res = await fetch("/api/settings/whatsapp/sync", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type }),
+      });
+      if (res.ok) onChanged();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function row(label: string, type: "smb_app_state_sync" | "history", view: SyncRequestView | null) {
+    if (!view) return null;
+    const limit = new Date(view.windowExpiresAt);
+    const canRetry = view.status === "failed" && limit.getTime() > Date.now();
+    return (
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <div>
+          <p className="font-medium">{label}</p>
+          <p className="text-muted-foreground">
+            {SYNC_STATUS_LABEL[view.status]}
+            {view.progress != null ? ` (${view.progress}%)` : ""}
+            {" — límite: "}
+            {limit.toLocaleString()}
+          </p>
+        </div>
+        {canRetry && (
+          <Button variant="outline" size="sm" disabled={busy === type} onClick={() => void retry(type)}>
+            {busy === type ? "Reintentando…" : "Reintentar"}
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Sincronización de contactos e historial</CardTitle>
+        <CardDescription>
+          Al conectar por coexistencia, Meta comparte una vez tus contactos y
+          el historial reciente. Tienes 24 horas desde la conexión para que
+          termine.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {row("Contactos", "smb_app_state_sync", sync.contacts)}
+        {row("Historial", "history", sync.history)}
+      </CardContent>
+    </Card>
   );
 }
 

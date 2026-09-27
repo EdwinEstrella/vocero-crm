@@ -62,12 +62,25 @@ export type MockWabaSubscription = {
   overrideCallbackUri: string | null;
 };
 
+/**
+ * 020 — Una llamada a `POST {phone_number_id}/smb_app_data` (D7/FR-043..044).
+ * El arnés la cuenta para comprobar que sale UNA sola vez por tipo, en orden.
+ */
+export type SmbAppDataCall = {
+  n: number;
+  phoneNumberId: string;
+  syncType: string;
+  requestId: string;
+  at: string;
+};
+
 type WaMockState = {
   outbox: OutboxEntry[];
   templates: MockTemplate[];
   capiEvents: CapiMockEvent[];
   /** Por WABA ID. Sin entrada = la app no está suscrita a esa WABA. */
   wabaSubscriptions: Record<string, MockWabaSubscription>;
+  smbAppDataCalls: SmbAppDataCall[];
   counter: number;
 };
 
@@ -79,6 +92,7 @@ function freshState(): WaMockState {
     templates: [],
     capiEvents: [],
     wabaSubscriptions: {},
+    smbAppDataCalls: [],
     counter: 0,
   };
 }

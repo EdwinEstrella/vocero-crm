@@ -36,6 +36,12 @@ vi.mock("@/lib/meta/client", async (importOriginal) => {
 
 vi.mock("@/lib/ai", () => ({ chatJson }));
 
+// 020: la guardia de suspensión de runAgentTurn no debe consumir turnos de la
+// cola de `select` de este arnés — se mockea aparte (cubierta en suspension.test.ts).
+vi.mock("@/server/platform/suspension", () => ({
+  isOrganizationSuspended: async () => false,
+}));
+
 // BD simulada: cola de resultados de select + capturas de insert/update.
 const selectQueue: unknown[][] = [];
 const inserts: Record<string, unknown>[] = [];

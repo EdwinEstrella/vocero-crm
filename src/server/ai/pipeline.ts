@@ -2,6 +2,7 @@ import { asc, desc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
 import { scoped } from "@/lib/db/tenant";
+import { isOrganizationSuspended } from "@/server/platform/suspension";
 import { moveLeadToStage as moveLeadThroughHistory } from "@/server/leads/stage-history";
 import { getEnv, isAiConfigured } from "@/lib/env";
 import { chatJson, type ChatMessage } from "@/lib/ai";
@@ -104,6 +105,9 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
   const conversation = convRows[0];
   if (!conversation) return;
   const organizationId = conversation.organizationId;
+
+  // 020 (FR-041): una organización suspendida no dispara efectos del agente.
+  if (await isOrganizationSuspended(organizationId)) return;
 
   // Condiciones de silencio: handoff activo o IA apagada en la conversación.
   if (conversation.handoffAt || !conversation.aiEnabled) return;

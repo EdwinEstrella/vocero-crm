@@ -212,14 +212,16 @@ export function buildEchoPayload(input: {
 }
 
 /**
- * Development-only payload control. It deliberately mirrors only the narrow
- * shape admitted by the coexistence decoder; it is not an authenticated Meta
- * fixture and must never expand the production admission boundary.
+ * Development-only payload control. Mirrors Meta's real `account_update`
+ * shape (contracts/webhook-smb.md, R3): no `phone_number_id`, routed by
+ * `waba_info.waba_id`. It is not an authenticated Meta fixture and must never
+ * expand the production admission boundary.
  */
 export function buildCoexistenceLifecyclePayload(input: {
   wabaId: string;
-  phoneNumberId: string;
-  event: "confirmed" | "rejected" | "revoked" | "disconnected";
+  /** Free-form: the decoder maps known values and logs the rest as no-ops. */
+  event: string;
+  ownerBusinessId?: string;
 }) {
   return {
     object: "whatsapp_business_account",
@@ -230,8 +232,11 @@ export function buildCoexistenceLifecyclePayload(input: {
           {
             field: "account_update",
             value: {
-              metadata: { phone_number_id: input.phoneNumberId },
-              coexistence: { event: input.event },
+              event: input.event,
+              waba_info: {
+                waba_id: input.wabaId,
+                owner_business_id: input.ownerBusinessId ?? "BIZ-MOCK",
+              },
             },
           },
         ],
@@ -240,14 +245,78 @@ export function buildCoexistenceLifecyclePayload(input: {
   };
 }
 
-/** A consent marker is mandatory even in the development harness. */
+/** Mirrors Meta's real `smb_app_state_sync` shape (contracts/webhook-smb.md, R2). */
+export function buildStateSyncPayload(input: {
+  wabaId: string;
+  phoneNumberId: string;
+  entries: {
+    action: "add" | "edit" | "remove";
+    fullName?: string;
+    firstName?: string;
+    phoneNumber?: string;
+  }[];
+}) {
+  return {
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: input.wabaId,
+        changes: [
+          {
+            field: "smb_app_state_sync",
+            value: {
+              messaging_product: "whatsapp",
+              metadata: {
+                display_phone_number: "5215500000000",
+                phone_number_id: input.phoneNumberId,
+              },
+              state_sync: input.entries.map((entry) => ({
+                type: "contact",
+                contact: {
+                  ...(entry.fullName ? { full_name: entry.fullName } : {}),
+                  ...(entry.firstName ? { first_name: entry.firstName } : {}),
+                  ...(entry.phoneNumber ? { phone_number: entry.phoneNumber } : {}),
+                },
+                action: entry.action,
+                metadata: { timestamp: String(Math.floor(Date.now() / 1000)) },
+              })),
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * Mirrors Meta's real nested `history` shape (contracts/webhook-smb.md, R2):
+ * threads of messages, or a declined delivery (error code 2593109).
+ */
 export function buildCoexistenceHistoryPayload(input: {
   wabaId: string;
   phoneNumberId: string;
-  consentedAt: string;
-  messages: Record<string, unknown>[];
-  contacts?: Record<string, unknown>[];
+  threads?: { id: string; messages: Record<string, unknown>[] }[];
+  phase?: string;
+  progress?: number;
+  declined?: boolean;
 }) {
+  const historyEntry = input.declined
+    ? {
+        errors: [
+          {
+            code: 2593109,
+            title: "History sync is turned off by the business from the WhatsApp Business App",
+          },
+        ],
+      }
+    : {
+        metadata: {
+          phase: input.phase ?? "COMPLETE",
+          chunk_order: 1,
+          progress: input.progress ?? 100,
+        },
+        threads: input.threads ?? [],
+      };
   return {
     object: "whatsapp_business_account",
     entry: [
@@ -257,10 +326,12 @@ export function buildCoexistenceHistoryPayload(input: {
           {
             field: "history",
             value: {
-              metadata: { phone_number_id: input.phoneNumberId },
-              coexistence: { consented_at: input.consentedAt },
-              messages: input.messages,
-              ...(input.contacts ? { contacts: input.contacts } : {}),
+              messaging_product: "whatsapp",
+              metadata: {
+                display_phone_number: "5215500000000",
+                phone_number_id: input.phoneNumberId,
+              },
+              history: [historyEntry],
             },
           },
         ],

@@ -165,59 +165,59 @@ cambio (hecho junto con esta spec).
 
 ## Fase 5 — US8/US9: webhook y sincronización (P1)
 
-- [ ] **T040** Resolver el NEEDS CLARIFICATION R3 de `plan.md` (evento real de
+- [X] **T040** Resolver el NEEDS CLARIFICATION R3 de `plan.md` (evento real de
       alta por coexistence) con una entrega real o la referencia vigente;
       anotar el resultado en `plan.md` → R3 antes de T041.
-- [ ] **T041** `src/server/whatsapp/lifecycle.ts`: decodificadores con las formas
+- [X] **T041** `src/server/whatsapp/lifecycle.ts`: decodificadores con las formas
       de Meta (`contracts/webhook-smb.md`): `account_update` por WABA con la
       tabla de eventos, `history` anidado (hilos, fase, progreso, error
       2593109), `smb_app_state_sync` → `kind: "state_sync"`; retirar la forma de
       fixture (`coexistence.event`, `consented_at`).
-- [ ] **T042** `src/server/whatsapp/sync-worker.ts`: enrutar `account_update`
+- [X] **T042** `src/server/whatsapp/sync-worker.ts`: enrutar `account_update`
       por `whatsapp_coexistence_claim.waba_id`; persistir `state_sync`;
       descartar con log (antes de persistir) lo de organizaciones suspendidas
       salvo `account_update`; `drainCoexistenceDeliveries` omite organizaciones
       suspendidas; al pasar a `active` fijar `activated_at` y, tras el commit,
       `requestInitialSync`.
-- [ ] **T043** `src/server/whatsapp/smb-sync.ts`: `requestInitialSync(orgId)`
+- [X] **T043** `src/server/whatsapp/smb-sync.ts`: `requestInitialSync(orgId)`
       (reclamo UNIQUE → llamada → `requested`/`failed`; `history` solo tras
       `smb_app_state_sync` `requested`), `retrySync(orgId, type)` (UPDATE
       condicional, ventana abierta), `applyStateSync(orgId, value)` (E2/E3),
       `recordHistoryProgress`, `markHistoryDeclined`, `getSyncStatus(orgId)`
       (calcula `expired`). Llamadas vía `graphRequest`, nunca en transacción,
       errores redactados.
-- [ ] **T044** `src/server/inbox/ingest.ts`: `ingestHistoricalMessages` sobre
+- [X] **T044** `src/server/inbox/ingest.ts`: `ingestHistoricalMessages` sobre
       hilos (contacto = `threads[].id`, dirección por número del negocio,
       `import_source = "history"`, sin agente, un SSE de refresco por lote);
       guardia de suspensión en `processMessagesValue` y `processEchoesValue`
       (log `[webhook] org suspendida` + descarte).
-- [ ] **T045** `src/server/inbox/identity.ts`: precedencia `manual > libreta >
+- [X] **T045** `src/server/inbox/identity.ts`: precedencia `manual > libreta >
       perfil` (el nombre de perfil solo reemplaza `perfil`). [P]
-- [ ] **T046** `src/server/whatsapp/template-events.ts`: guardia de suspensión
+- [X] **T046** `src/server/whatsapp/template-events.ts`: guardia de suspensión
       tras resolver la organización por WABA. [P]
-- [ ] **T047** `src/app/api/webhooks/wa/[webhookToken]/route.ts`:
+- [X] **T047** `src/app/api/webhooks/wa/[webhookToken]/route.ts`:
       `history` y `smb_app_state_sync` solo por el buzón durable;
       `account_update` encolado aunque la organización esté suspendida; los
       seis campos cubiertos, el resto ignorado sin error.
-- [ ] **T048** `src/server/ai/pipeline.ts`: `runAgentTurn` sale sin efectos si
+- [X] **T048** `src/server/ai/pipeline.ts`: `runAgentTurn` sale sin efectos si
       la organización está suspendida. [P]
-- [ ] **T049** `src/server/dev/wa-mock-inbound.ts` + `src/app/api/dev/wa-mock/coexistence/route.ts`:
+- [X] **T049** `src/server/dev/wa-mock-inbound.ts` + `src/app/api/dev/wa-mock/coexistence/route.ts`:
       `buildStateSyncPayload` (add/remove, varias entradas), reescribir
       `buildCoexistenceHistoryPayload` y `buildCoexistenceLifecyclePayload` a la
       forma de Meta, más el caso `history` declinado.
-- [ ] **T050** `src/app/api/dev/wa-mock/graph/[...path]/route.ts`: `POST
+- [X] **T050** `src/app/api/dev/wa-mock/graph/[...path]/route.ts`: `POST
       {pn}/smb_app_data` (valida cuerpo, `request_id`, `-fail` → 400) y registra
       las llamadas en el outbox para que el arnés cuente cuántas hubo. [P]
-- [ ] **T051** `src/app/api/settings/whatsapp/route.ts` (GET agrega
+- [X] **T051** `src/app/api/settings/whatsapp/route.ts` (GET agrega
       `sync: { contacts, history }`) + `src/app/api/settings/whatsapp/sync/route.ts`
       (`POST { type }` → `retrySync`; solo `owner`, y permitido también al
       super-admin suplantando: reintentar es una operación de soporte válida) +
       `src/components/settings/whatsapp-wizard.tsx`: estados y hora límite.
-- [ ] **T052** `tests/unit/coexistence-meta-shapes.test.ts`: decodificación de
+- [X] **T052** `tests/unit/coexistence-meta-shapes.test.ts`: decodificación de
       los fixtures de Meta (los tres campos), eventos de `account_update`,
       desconocidos ignorados; actualizar `whatsapp-coexistence-lifecycle.test.ts`
       y `wa-mock-coexistence.test.ts`. [P]
-- [ ] **T053** `tests/unit/smb-sync.test.ts`: una sola petición por tipo con
+- [X] **T053** `tests/unit/smb-sync.test.ts`: una sola petición por tipo con
       confirmaciones repetidas, `history` no sale si contactos falló, reintento
       condicional, ventana vencida, `add` crea/actualiza sin pisar `manual`,
       `remove` sin efecto, entrada sin teléfono ignorada, aislamiento (el mismo
