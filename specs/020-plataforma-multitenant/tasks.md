@@ -103,63 +103,63 @@ cambio (hecho junto con esta spec).
 
 ## Fase 4 — US4–US7: plataforma (P1/P2)
 
-- [ ] **T024** `src/server/platform/admins.ts`: `isPlatformAdmin(user)` =
+- [X] **T024** `src/server/platform/admins.ts`: `isPlatformAdmin(user)` =
       `emailVerified && email ∈ PLATFORM_ADMIN_EMAILS`; `requirePlatformAdmin()`
       (sesión Better Auth, sin membresía). `src/lib/api.ts`:
       `withPlatformAdmin(handler)` → `404` sin cuerpo si no.
-- [ ] **T025** `scripts/platform-admin.mjs`: crea (o marca) el usuario del
+- [X] **T025** `scripts/platform-admin.mjs`: crea (o marca) el usuario del
       correo dado con `NEW_PASSWORD` por entorno, `email_verified = true`, sin
       organización; se niega si el correo no está en `PLATFORM_ADMIN_EMAILS` o
       si ya pertenece a una organización. Uso documentado en la cabecera (bash y
       PowerShell), patrón de `scripts/reset-password.mjs`.
-- [ ] **T026** `src/server/platform/suspension.ts`: `isOrganizationSuspended(orgId)`
+- [X] **T026** `src/server/platform/suspension.ts`: `isOrganizationSuspended(orgId)`
       (caché 30 s por org, invalidada por suspender/reactivar),
       `suspendOrganization` (fija `suspended_at`, borra sesiones de sus
       miembros, auditoría; idempotente), `reactivateOrganization`.
-- [ ] **T027** `src/server/platform/audit.ts`: `recordPlatformEvent`,
+- [X] **T027** `src/server/platform/audit.ts`: `recordPlatformEvent`,
       `listPlatformEvents`. [P]
-- [ ] **T028** `src/server/platform/impersonation.ts`: `startImpersonation`
+- [X] **T028** `src/server/platform/impersonation.ts`: `startImpersonation`
       (rechaza objetivo con miembro super-admin; cierra la activa con
       `reemplazada`), `endImpersonation`, `resolveImpersonation(adminUserId,
       sessionId, cookieId)` (valida misma sesión, sin fin, sin expirar; cierra
       con `expirada`/`sesion_terminada` si no), cookie `vocero_imp`.
-- [ ] **T029** `src/lib/auth/session.ts`: `SessionContext.impersonation`;
+- [X] **T029** `src/lib/auth/session.ts`: `SessionContext.impersonation`;
       `requireSession` aplica suplantación (T028) para super-admins y `403
       org_suspendida` para miembros de organizaciones suspendidas; nuevo error
       tipado que `withAuth` (`src/lib/api.ts`) traduce a ese código.
-- [ ] **T030** `src/server/platform/organizations.ts`: `listOrganizations({ q,
+- [X] **T030** `src/server/platform/organizations.ts`: `listOrganizations({ q,
       page })` con owner, estados de WhatsApp/coexistence, conteos (sin
       `is_test`) y última actividad, en consultas agregadas (sin N+1).
-- [ ] **T031** `src/server/platform/delete.ts`: `deleteOrganization(id,
+- [X] **T031** `src/server/platform/delete.ts`: `deleteOrganization(id,
       confirmName, actor)`: valida nombre exacto; cierra suplantaciones
       (`org_borrada`); lee WABA/token antes; borra en transacción la
       organización (cascada) y los usuarios cuya única membresía era ella (no
       super-admins); después, fuera de la transacción, `rm -rf
       MEDIA_DIR/{orgId}` y `DELETE {waba}/subscribed_apps` best-effort;
       auditoría con `metaUnsubscribe`.
-- [ ] **T032** Rutas `src/app/api/platform/organizations/route.ts`,
+- [X] **T032** Rutas `src/app/api/platform/organizations/route.ts`,
       `organizations/[id]/suspend/route.ts`, `organizations/[id]/reactivate/route.ts`,
       `organizations/[id]/route.ts` (DELETE), `impersonation/route.ts`,
       `audit/route.ts`, todas con `withPlatformAdmin` y Zod según
       `contracts/plataforma.md`.
-- [ ] **T033** `src/app/(platform)/admin/layout.tsx` (gate → `notFound()`),
+- [X] **T033** `src/app/(platform)/admin/layout.tsx` (gate → `notFound()`),
       `page.tsx` (lista, búsqueda, paginación), `[id]/page.tsx` (detalle +
       auditoría) y `src/components/platform/{organizations-table,suspend-dialog,delete-dialog,impersonate-button}.tsx`;
       el diálogo de borrado habilita el botón solo con el nombre exacto.
-- [ ] **T034** `src/app/(app)/layout.tsx` + `src/components/platform/impersonation-banner.tsx`:
+- [X] **T034** `src/app/(app)/layout.tsx` + `src/components/platform/impersonation-banner.tsx`:
       aviso fijo con nombre, "suspendida" si aplica y Salir; super-admin sin
       suplantación → `redirect("/admin")`; miembro suspendido →
       `redirect("/suspendida")`.
-- [ ] **T035** `src/app/suspendida/page.tsx`: mensaje "Tu cuenta está
+- [X] **T035** `src/app/suspendida/page.tsx`: mensaje "Tu cuenta está
       suspendida; contacta a soporte" + cerrar sesión. [P]
-- [ ] **T036** `src/app/api/settings/team/route.ts`: `POST`/`DELETE` → `403
+- [X] **T036** `src/app/api/settings/team/route.ts`: `POST`/`DELETE` → `403
       suplantacion_restringida` con `session.impersonation`. [P]
-- [ ] **T037** `tests/unit/platform-gate.test.ts`: sin sesión, owner, correo
+- [X] **T037** `tests/unit/platform-gate.test.ts`: sin sesión, owner, correo
       listado sin verificar, verificado no listado → 404; admin → pasa. [P]
-- [ ] **T038** `tests/unit/suspension.test.ts`: `requireSession` → 403;
+- [X] **T038** `tests/unit/suspension.test.ts`: `requireSession` → 403;
       hook de sesión rechaza; `requireBotKey` → 403; idempotencia de
       suspender/reactivar. [P]
-- [ ] **T039** `tests/unit/impersonation.test.ts`: misma sesión o nada,
+- [X] **T039** `tests/unit/impersonation.test.ts`: misma sesión o nada,
       expiración, objetivo protegido, una activa por admin, restricciones de
       equipo/clave, acciones atribuidas al admin. [P]
 

@@ -29,6 +29,13 @@ export const GET = withAuth(async (session) => {
 
 /** Genera la primera clave, o ROTA la existente (owner only). */
 export const POST = withAuth(async (session) => {
+  if (session.impersonation) {
+    return apiError(
+      403,
+      "suplantacion_restringida",
+      "No disponible mientras se suplanta una organización"
+    );
+  }
   if (session.role !== "owner") {
     return apiError(403, "forbidden", "Solo el propietario puede generar la clave");
   }
@@ -44,6 +51,13 @@ export const POST = withAuth(async (session) => {
 
 /** Revoca la clave activa (owner only); sin clave activa, 200 igual (idempotente). */
 export const DELETE = withAuth(async (session) => {
+  if (session.impersonation) {
+    return apiError(
+      403,
+      "suplantacion_restringida",
+      "No disponible mientras se suplanta una organización"
+    );
+  }
   if (session.role !== "owner") {
     return apiError(403, "forbidden", "Solo el propietario puede revocar la clave");
   }

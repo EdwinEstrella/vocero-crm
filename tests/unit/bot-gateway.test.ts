@@ -3,6 +3,7 @@ import { resetRateLimit } from "@/lib/rate-limit";
 import { BOT_API_BUDGET, BOT_AUTH_FAILURES, requireBotKey } from "@/server/bot/auth";
 import { mergeFicha, normalizeFicha } from "@/server/bot/ficha";
 import { toHandoffReason } from "@/server/bot/handoff";
+import { resetSuspensionCache } from "@/server/platform/suspension";
 
 /** La puerta de toda la superficie `/api/bot/*` — 020: clave POR ORGANIZACIÓN. */
 
@@ -58,6 +59,11 @@ describe("requireBotKey", () => {
     state.keys.set(KEY_A, { organizationId: "org_a", keyId: "bak_a" });
     state.keys.set(KEY_B, { organizationId: "org_b", keyId: "bak_b" });
     resetRateLimit();
+    // El chequeo de suspensión (src/server/platform/suspension.ts) cachea
+    // 30s por organización: sin resetearlo, una prueba anterior deja en caché
+    // el estado "activa" y la organización recién suspendida seguiría
+    // pasando hasta que expire.
+    resetSuspensionCache();
   });
   afterEach(() => vi.unstubAllEnvs());
 
@@ -129,6 +135,7 @@ describe("requireBotKey: límites (autentica primero, cuenta después)", () => {
     state.suspended.clear();
     state.keys.set(KEY_A, { organizationId: "org_a", keyId: "bak_a" });
     resetRateLimit();
+    resetSuspensionCache();
   });
 
   it("700 requests sin key desde una IP → el cerebro sigue en 200", async () => {

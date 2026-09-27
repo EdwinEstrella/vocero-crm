@@ -8,6 +8,7 @@ import type { ThemePreference } from "@/lib/theme";
 import type { ResolvedCommit } from "@/lib/version";
 import { AppNav } from "@/components/app-nav";
 import { BrandLogo } from "@/components/brand-mark";
+import { ImpersonationBanner } from "@/components/platform/impersonation-banner";
 
 /**
  * Cascarón de la app en dos modos:
@@ -28,6 +29,7 @@ export function AppShell({
   theme,
   commit,
   agenda = false,
+  impersonation = null,
   children,
 }: {
   branding: Branding;
@@ -38,6 +40,8 @@ export function AppShell({
   commit?: ResolvedCommit;
   /** 015 — ¿esta instancia tiene agenda? Lo decide el servidor. */
   agenda?: boolean;
+  /** 020 — super-admin viendo esta organización como soporte (E6/FR-033). */
+  impersonation?: { organizationName: string; suspended: boolean } | null;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -81,6 +85,12 @@ export function AppShell({
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
+        {impersonation && (
+          <ImpersonationBanner
+            organizationName={impersonation.organizationName}
+            suspended={impersonation.suspended}
+          />
+        )}
         {/* Misma pieza que la barra lateral (`nav-dark`): en el teléfono la
             franja azul marino de arriba es lo que queda del bicolor. */}
         <header className="nav-dark flex h-12 shrink-0 items-center gap-1.5 border-b bg-subtle px-2 text-foreground lg:hidden">
