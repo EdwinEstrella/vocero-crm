@@ -191,7 +191,11 @@ export async function listOrganizations(opts: {
         coexistence: coexistenceByOrg.get(r.id) ?? "none",
         contacts: contactsByOrg.get(r.id) ?? 0,
         messages: messages?.count ?? 0,
-        lastActivityAt: messages?.lastAt?.toISOString() ?? null,
+        // `max(message.created_at)` viaja detrás de un `sql<Date | null>` que
+        // es solo una anotación de tipo: el driver de postgres puede devolver
+        // el agregado como string en vez de Date (a diferencia de una columna
+        // seleccionada directa), así que se normaliza antes de serializar.
+        lastActivityAt: messages?.lastAt ? new Date(messages.lastAt).toISOString() : null,
       };
     }),
   };

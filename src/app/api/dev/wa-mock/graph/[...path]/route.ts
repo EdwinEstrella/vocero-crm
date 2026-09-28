@@ -170,6 +170,15 @@ export async function POST(req: Request, ctx: Params) {
     return Response.json({ id: `media-up-${nextN()}` });
   }
 
+  // 020 — POST oauth/access_token: intercambio del código corto de Embedded
+  // Signup (`exchangeEmbeddedSignupCode`). El mock no valida `client_id`/
+  // `client_secret`/`code`: solo necesita devolver un access_token con el que
+  // el resto del flujo (testConnection, subscribeAppToWaba) siga hablando con
+  // este mismo mock.
+  if (path.length === 2 && path[0] === "oauth" && path[1] === "access_token") {
+    return Response.json({ access_token: `mock-embedded-token-${nextN()}` });
+  }
+
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
   // 020 — POST {phoneNumberId}/smb_app_data: pide contactos o historial de

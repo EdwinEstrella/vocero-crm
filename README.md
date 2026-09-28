@@ -8,8 +8,11 @@
 Vocero es un CRM self-hosted y gratuito para negocios que venden por WhatsApp:
 bandeja en tiempo real, pipeline de ventas, un agente de IA con el conocimiento
 de tu negocio y un **Laboratorio** donde clientes simulados lo evalúan antes de
-que hable con clientes reales. Una instancia = un negocio, en tu propio
-servidor, con tus datos.
+que hable con clientes reales. Desde la 020, una instancia es una **plataforma
+multi-tenant**: cada negocio se registra solo y opera aislado, en tu propio
+servidor, con tus datos. Si operas la plataforma (varios negocios en la misma
+instancia), el panel de super-administrador y su alta están en
+[docs/plataforma.md](docs/plataforma.md).
 
 ¿Ya tienes tu propio agente? Puedes apagar el de Vocero y conectar el tuyo por
 la [API de servicio `/api/bot/*`](#-trae-tu-propio-agente): el token de WhatsApp

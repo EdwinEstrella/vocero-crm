@@ -6,6 +6,13 @@ export const dynamic = "force-dynamic";
 
 export const POST = withAuth(async (session) => {
   if (!isWhatsappEmbeddedSignupEnabled()) return apiError(404, "not_found", "Función no habilitada");
+  if (session.impersonation) {
+    return apiError(
+      403,
+      "suplantacion_restringida",
+      "No disponible mientras se suplanta una organización"
+    );
+  }
   if (session.role !== "owner") return apiError(403, "forbidden", "Solo el dueño puede conectar WhatsApp");
   const attempt = await createCoexistenceAttempt({
     organizationId: session.organizationId,

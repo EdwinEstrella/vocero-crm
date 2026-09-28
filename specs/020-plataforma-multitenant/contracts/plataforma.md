@@ -108,3 +108,23 @@ también desde el aviso de la app (el admin sigue siendo admin).
 | Super-admin con cookie `vocero_imp` válida (misma sesión, sin fin, sin expirar) | `{ userId: <admin>, organizationId: <objetivo>, role: "owner", impersonation: { id, organizationName, suspended } }` |
 | Super-admin sin suplantación | sin organización → páginas de la app redirigen a `/admin`; API `401` como hoy |
 | Cookie inválida/expirada | se ignora; si la fila seguía abierta, se cierra con `expirada`/`sesion_terminada` |
+
+## Acciones restringidas durante una suplantación (FR-034)
+
+Con `session.impersonation` presente, estas rutas responden `403
+suplantacion_restringida` en vez de ejecutar la mutación — el soporte puede
+VER la organización pero no cambiar su identidad de equipo ni sus
+credenciales de canal:
+
+| Ruta | Motivo |
+|---|---|
+| `POST`/`DELETE /api/settings/team` | crear/borrar cuentas de equipo (FR-034 original) |
+| `POST`/`DELETE /api/settings/api-key` | generar/rotar/revocar la clave del cerebro (FR-034 original) |
+| `PUT /api/settings/whatsapp` | conexión manual por token: cambiaría a qué WABA/número está atado el negocio |
+| `POST /api/settings/whatsapp/start` | inicia un intento nuevo de Embedded Signup (coexistence) |
+| `POST /api/settings/whatsapp/complete` | confirma el intento y crea el claim con el token del negocio |
+| `POST /api/settings/whatsapp/disconnect` | desconecta el canal del negocio |
+
+`POST /api/settings/whatsapp/sync` (reintento manual de sincronización) NO
+está restringida: reintentar una sincronización que ya falló es soporte
+válido (T051) y no cambia ninguna credencial.

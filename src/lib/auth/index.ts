@@ -37,6 +37,24 @@ function isInternalSignup(): boolean {
 
 const RATE_LIMITED_PATHS = new Set(["/sign-in/email", "/sign-up/email"]);
 
+/**
+ * 020 (FR-004) — Rechaza CUALQUIER `/sign-up/email` (público o interno, vía
+ * `runInternalSignup`: cuentas de equipo) cuyo correo esté reservado para el
+ * super-admin. Antes solo se aplicaba al alta pública: un owner podía
+ * "apropiarse" del correo reservado creando una cuenta de equipo con él, y
+ * luego `scripts/platform-admin.mjs` rechazaba al super-admin real con "ya
+ * pertenece a una organización". El script del operador no pasa por Better
+ * Auth (SQL directo) y sigue funcionando igual. Exportada para poder probarla
+ * sin levantar la instancia completa de Better Auth.
+ */
+export function assertSignUpEmailAllowed(path: string, body: unknown): void {
+  if (path !== "/sign-up/email") return;
+  const email = (body as { email?: string } | undefined)?.email;
+  if (typeof email === "string" && isReservedPlatformEmail(email)) {
+    throw new APIError("FORBIDDEN", { message: "correo_reservado" });
+  }
+}
+
 function createAuth() {
   const env = getEnv();
   return betterAuth({
@@ -73,18 +91,9 @@ function createAuth() {
           }
         }
         // 020 — Registro público SIEMPRE abierto (D2); solo se rechaza el
-        // correo reservado para el super-admin (FR-004). Las altas internas
-        // (equipo, script del operador) no pasan por aquí como usuario final:
-        // igual quedan cubiertas por si algún día un correo reservado llega
-        // por esta ruta.
-        if (ctx.path === "/sign-up/email" && !isInternalSignup()) {
-          const email = (ctx.body as { email?: string } | undefined)?.email;
-          if (typeof email === "string" && isReservedPlatformEmail(email)) {
-            throw new APIError("FORBIDDEN", {
-              message: "correo_reservado",
-            });
-          }
-        }
+        // correo reservado para el super-admin (FR-004), sin excepción para
+        // una alta interna (ver `assertSignUpEmailAllowed`).
+        assertSignUpEmailAllowed(ctx.path, ctx.body);
       }),
     },
     databaseHooks: {

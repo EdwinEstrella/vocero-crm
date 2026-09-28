@@ -63,7 +63,9 @@ export function scheduleAgentTurn(conversationId: string): void {
   }
   if (entry.timer) clearTimeout(entry.timer);
   const delay = getEnv().AGENT_COALESCE_MS;
+  console.log(`[DEBUG-TMP] scheduleAgentTurn(${conversationId}) delay=${delay}`);
   entry.timer = setTimeout(() => {
+    console.log(`[DEBUG-TMP] timer fired for ${conversationId}`);
     entry.timer = null;
     void executeTurn(conversationId);
   }, delay);
@@ -94,6 +96,7 @@ async function executeTurn(conversationId: string): Promise<void> {
  * debounce 0 y sin pasar por el coalesce).
  */
 export async function runAgentTurn(conversationId: string): Promise<void> {
+  console.log(`[DEBUG-TMP] runAgentTurn start ${conversationId} aiConfigured=${isAiConfigured()}`);
   if (!isAiConfigured()) return;
 
   const db = getDb();
@@ -103,14 +106,25 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
     .where(eq(schema.conversation.id, conversationId))
     .limit(1);
   const conversation = convRows[0];
-  if (!conversation) return;
+  if (!conversation) {
+    console.log(`[DEBUG-TMP] no conversation row for ${conversationId}`);
+    return;
+  }
   const organizationId = conversation.organizationId;
 
   // 020 (FR-041): una organización suspendida no dispara efectos del agente.
-  if (await isOrganizationSuspended(organizationId)) return;
+  if (await isOrganizationSuspended(organizationId)) {
+    console.log(`[DEBUG-TMP] org ${organizationId} suspendida, saliendo`);
+    return;
+  }
 
   // Condiciones de silencio: handoff activo o IA apagada en la conversación.
-  if (conversation.handoffAt || !conversation.aiEnabled) return;
+  if (conversation.handoffAt || !conversation.aiEnabled) {
+    console.log(
+      `[DEBUG-TMP] handoffAt=${conversation.handoffAt} aiEnabled=${conversation.aiEnabled}, saliendo`
+    );
+    return;
+  }
 
   const profileRows = await db
     .select()
@@ -118,10 +132,17 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
     .where(eq(schema.agentProfile.organizationId, organizationId))
     .limit(1);
   const profile = profileRows[0];
-  if (!profile) return;
+  if (!profile) {
+    console.log(`[DEBUG-TMP] sin agentProfile para org ${organizationId}`);
+    return;
+  }
+  console.log(`[DEBUG-TMP] profile.enabled=${profile.enabled} conversation.isTest=${conversation.isTest}`);
   // El toggle global aplica a conversaciones reales; el Laboratorio evalúa el
   // comportamiento configurado aunque el agente aún no esté encendido.
-  if (!conversation.isTest && !profile.enabled) return;
+  if (!conversation.isTest && !profile.enabled) {
+    console.log(`[DEBUG-TMP] profile disabled y no es test, saliendo`);
+    return;
+  }
 
   const history = await db
     .select()
@@ -131,13 +152,18 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
     .limit(20);
   history.reverse();
   const lastInbound = [...history].reverse().find((m) => m.direction === "in");
-  if (!lastInbound) return;
+  if (!lastInbound) {
+    console.log(`[DEBUG-TMP] sin lastInbound, saliendo`);
+    return;
+  }
 
   // Ventana cerrada: el agente JAMÁS envía texto libre → handoff 'ventana'.
   if (!conversation.isTest && !isWindowOpen(conversation.lastInboundAt)) {
+    console.log(`[DEBUG-TMP] ventana cerrada, handoff`);
     await applyHandoff(conversationId, organizationId, "ventana");
     return;
   }
+  console.log(`[DEBUG-TMP] llegando al match de intencion de handoff / LLM`);
 
   // Patrón de respaldo ANTES del LLM (FR-022). Avisa y traspasa, en el mismo
   // orden que el camino del modelo (`farewell` y luego handoff): callar ante

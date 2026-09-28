@@ -13,7 +13,14 @@
  */
 
 const BASE = process.env.APP_BASE_URL ?? "http://localhost:3000";
-const BOT_KEY = process.env.BOT_API_KEY;
+/**
+ * 020 (T055) — Ya no sale de `BOT_API_KEY` (retirada): el operador del
+ * arnés (el usuario "e2e@vocero.test") la genera vía
+ * `POST /api/settings/api-key`, como cualquier owner real. `BOT_API_KEY` en
+ * el entorno, si sigue presente, solo sirve para probar que YA NO funciona
+ * (sección multi-tenant).
+ */
+let BOT_KEY = "";
 
 let cookie = "";
 let failures = 0;
@@ -58,6 +65,54 @@ function bot(path, opts = {}) {
   });
 }
 
+/**
+ * 020 — Sesión independiente con su propia cookie: la sección multi-tenant
+ * necesita hablar como VARIAS organizaciones (y el super-admin) a la vez, y
+ * el `cookie` de módulo de arriba es de UNA sola sesión (el operador
+ * original de las secciones 001-019).
+ */
+function createClient() {
+  let clientCookie = "";
+  async function clientApi(path, opts = {}) {
+    const res = await fetch(`${BASE}${path}`, {
+      ...opts,
+      headers: {
+        "content-type": "application/json",
+        origin: BASE,
+        ...(clientCookie ? { cookie: clientCookie } : {}),
+        ...(opts.headers ?? {}),
+      },
+    });
+    const setCookie = res.headers.getSetCookie?.() ?? [];
+    if (setCookie.length) {
+      clientCookie = setCookie.map((c) => c.split(";")[0]).join("; ");
+    }
+    let json = null;
+    try {
+      json = await res.clone().json();
+    } catch {}
+    return { res, json };
+  }
+  return { api: clientApi };
+}
+
+/** `/api/bot/*` con una clave EXPLÍCITA (no la del módulo): sin sesión, nunca. */
+async function botAs(key, path, opts = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    ...opts,
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": key ?? "",
+      ...(opts.headers ?? {}),
+    },
+  });
+  let json = null;
+  try {
+    json = await res.clone().json();
+  } catch {}
+  return { res, json };
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -78,13 +133,6 @@ async function hasta(cond, ms = 15000, paso = 400) {
 const PN = "PN-E2E-1";
 
 async function main() {
-  if (!BOT_KEY || BOT_KEY.length < 16) {
-    console.error(
-      "BOT_API_KEY ausente o corta (<16): los checks de /api/bot/* no pueden correr."
-    );
-    process.exit(1);
-  }
-
   console.log("== Setup: registro/login + conexión WhatsApp ==");
   const email = "e2e@vocero.test";
   const password = "password-e2e-123";
@@ -93,7 +141,9 @@ async function main() {
     body: JSON.stringify({ email, password, name: "Operador E2E" }),
   });
   if (!su.res.ok) {
-    // Re-corrida: el registro se cierra tras la primera organización.
+    // 020 (T055) — Re-corrida: el registro SIGUE abierto (cada alta crea SU
+    // propia organización), lo que falla aquí es el correo duplicado —no un
+    // registro "cerrado" como en 1.x—, así que se sigue por login.
     su = await api("/api/auth/sign-in/email", {
       method: "POST",
       body: JSON.stringify({ email, password }),
@@ -115,6 +165,22 @@ async function main() {
     JSON.stringify(conn.json)
   );
   await api("/api/dev/wa-mock/outbox", { method: "DELETE" });
+
+  // 020 (T055) — `BOT_KEY` sale de Ajustes → API, no del entorno: revoca
+  // cualquier clave vieja de una corrida anterior contra la misma base (para
+  // que "rotar" no deje dos claves activas) y genera la de esta corrida.
+  await api("/api/settings/api-key", { method: "DELETE" });
+  const keyResp = await api("/api/settings/api-key", { method: "POST" });
+  BOT_KEY = keyResp.json?.secret ?? "";
+  ok(
+    "clave de API del operador generada vía Ajustes → API",
+    keyResp.res.status === 201 && BOT_KEY.length >= 16,
+    JSON.stringify(keyResp.json)
+  );
+  if (!BOT_KEY) {
+    console.error("Sin BOT_KEY: los checks de /api/bot/* no pueden correr.");
+    process.exit(1);
+  }
 
   await overrideChecks();
 
@@ -1230,6 +1296,10 @@ async function main() {
   await atribucionChecks();
   await anuncioDeOrigenChecks();
   await r11BotChecks();
+
+  const plataforma = await multiTenantChecks();
+  await platformChecks(plataforma);
+  await sincronizacionChecks();
 
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
@@ -3070,4 +3140,712 @@ async function r11BotChecks() {
     );
   }
   await api("/api/agent/profile", { method: "PUT", body: JSON.stringify({ enabled: false }) });
+}
+
+/* ============================================================
+ * 020 — Plataforma multi-tenant (T054-T058)
+ *
+ * Vocero deja de ser "una instancia = un negocio": cada alta pública crea SU
+ * organización, aislada de las demás. Estas tres secciones recorren las
+ * historias US1/US2 (alta + aislamiento), US4-US7 (panel de super-admin) y
+ * US8/US9 (coexistence: sincronización al conectar). Ver
+ * tests/e2e/us-plataforma.md para el guion en prosa.
+ * ============================================================ */
+
+const MT_PASSWORD = "password-e2e-mt-123";
+
+/**
+ * US1/US2 — Dos altas públicas → dos organizaciones aisladas. Devuelve todo
+ * lo que `platformChecks` necesita para seguir operando sobre las MISMAS A/B
+ * (listarlas, suplantar A, suspender/borrar B).
+ */
+async function multiTenantChecks() {
+  console.log("\n== 020 (US1/US2): alta abierta y aislamiento entre organizaciones ==");
+  const RUN = Date.now().toString().slice(-6);
+  const A = createClient();
+  const B = createClient();
+  const emailA = `e2e-mt-a-${RUN}@vocero.test`;
+  const emailB = `e2e-mt-b-${RUN}@vocero.test`;
+  const PN_A = `PN-E2E-MT-A-${RUN}`;
+  const PN_B = `PN-E2E-MT-B-${RUN}`;
+
+  const suA = await A.api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ email: emailA, password: MT_PASSWORD, name: "Dueña A" }),
+  });
+  ok("alta pública crea la organización A", suA.res.ok, JSON.stringify(suA.json));
+  const suB = await B.api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ email: emailB, password: MT_PASSWORD, name: "Dueño B" }),
+  });
+  ok(
+    "una segunda alta pública crea B, SIN lock de «primer arranque»",
+    suB.res.ok,
+    JSON.stringify(suB.json)
+  );
+
+  const connA = await A.api("/api/settings/whatsapp", {
+    method: "PUT",
+    body: JSON.stringify({ wabaId: `WABA-MT-A-${RUN}`, phoneNumberId: PN_A, token: "tok-mt-a" }),
+  });
+  ok("A conecta su propio WhatsApp", connA.res.ok, JSON.stringify(connA.json));
+  const connB = await B.api("/api/settings/whatsapp", {
+    method: "PUT",
+    body: JSON.stringify({ wabaId: `WABA-MT-B-${RUN}`, phoneNumberId: PN_B, token: "tok-mt-b" }),
+  });
+  ok("B conecta su propio WhatsApp", connB.res.ok, JSON.stringify(connB.json));
+
+  const keyAResp = await A.api("/api/settings/api-key", { method: "POST" });
+  const keyA = keyAResp.json?.secret ?? "";
+  ok(
+    "A genera su propia clave de API",
+    keyAResp.res.status === 201 && keyA.length >= 16,
+    JSON.stringify(keyAResp.json)
+  );
+  const keyBResp = await B.api("/api/settings/api-key", { method: "POST" });
+  const keyB = keyBResp.json?.secret ?? "";
+  ok(
+    "B genera su propia clave de API",
+    keyBResp.res.status === 201 && keyB.length >= 16,
+    JSON.stringify(keyBResp.json)
+  );
+
+  // Un inbound a CADA número: solo debe aparecer en SU bandeja (re-verificado
+  // con dos organizaciones reales, no solo dos números en una).
+  await api("/api/dev/wa-mock/inbound", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: PN_A,
+      from: `52155${RUN}01`,
+      name: "Cliente de A",
+      text: "hola, escribo a A",
+      waMessageId: `wamid.e2e.mt.a.${RUN}`,
+    }),
+  });
+  await api("/api/dev/wa-mock/inbound", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: PN_B,
+      from: `52155${RUN}02`,
+      name: "Cliente de B",
+      text: "hola, escribo a B",
+      waMessageId: `wamid.e2e.mt.b.${RUN}`,
+    }),
+  });
+
+  await hasta(async () => {
+    const cs = (await A.api("/api/conversations")).json?.conversations ?? [];
+    return cs.some((c) => c.contact.name === "Cliente de A");
+  });
+  await hasta(async () => {
+    const cs = (await B.api("/api/conversations")).json?.conversations ?? [];
+    return cs.some((c) => c.contact.name === "Cliente de B");
+  });
+
+  const convsA = (await A.api("/api/conversations")).json?.conversations ?? [];
+  const convA = convsA.find((c) => c.contact.name === "Cliente de A");
+  const convsB = (await B.api("/api/conversations")).json?.conversations ?? [];
+  const convB = convsB.find((c) => c.contact.name === "Cliente de B");
+  ok("el inbound de A solo aparece en la bandeja de A", !!convA);
+  ok("el inbound de B solo aparece en la bandeja de B", !!convB);
+  ok(
+    "B no ve al cliente de A en su propia bandeja",
+    !convsB.some((c) => c.contact.name === "Cliente de A")
+  );
+  ok(
+    "A no ve al cliente de B en su propia bandeja",
+    !convsA.some((c) => c.contact.name === "Cliente de B")
+  );
+
+  // 404 cruzados por id: contacto, conversación/mensajes y lead.
+  const crossContact = convA ? await B.api(`/api/contacts/${convA.contact.id}`) : null;
+  ok(
+    "el contacto de A → 404 desde la sesión de B",
+    crossContact?.res.status === 404,
+    `status=${crossContact?.res.status}`
+  );
+  const crossConv = convA ? await B.api(`/api/conversations/${convA.id}/messages`) : null;
+  ok(
+    "la conversación (y sus mensajes) de A → 404 desde B",
+    crossConv?.res.status === 404,
+    `status=${crossConv?.res.status}`
+  );
+
+  const leadsA = (await A.api("/api/pipeline/board")).json?.leads ?? [];
+  const leadA = leadsA.find((l) => l.contact?.id === convA?.contact.id);
+  ok("el lead de A existe (nace con el contacto)", !!leadA, JSON.stringify(leadsA));
+  if (leadA) {
+    const crossLead = await B.api(`/api/pipeline/leads/${leadA.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ amountCents: 500 }),
+    });
+    ok(
+      "el lead de A → 404 desde la sesión de B",
+      crossLead.res.status === 404,
+      `status=${crossLead.res.status}`
+    );
+  }
+
+  // La clave de A jamás resuelve un recurso de B, y viceversa; cada una sigue
+  // resolviendo lo SUYO.
+  const crossBot = convB ? await botAs(keyA, `/api/bot/context?conversationId=${convB.id}`) : null;
+  ok(
+    "la clave de A contra una conversación de B → 404",
+    crossBot?.res.status === 404,
+    `status=${crossBot?.res.status}`
+  );
+  const ownBotA = convA ? await botAs(keyA, `/api/bot/context?conversationId=${convA.id}`) : null;
+  ok(
+    "la clave de A contra SU propia conversación → 200",
+    ownBotA?.res.status === 200,
+    `status=${ownBotA?.res.status}`
+  );
+  const ownBotB = convB ? await botAs(keyB, `/api/bot/context?conversationId=${convB.id}`) : null;
+  ok(
+    "la clave de B contra SU propia conversación → 200",
+    ownBotB?.res.status === 200,
+    `status=${ownBotB?.res.status}`
+  );
+
+  // E1 — BOT_API_KEY global (retirada) ya no resuelve NINGUNA organización.
+  const legacyKey = process.env.BOT_API_KEY || "clave-global-retirada-0123456789";
+  const legacy = convA ? await botAs(legacyKey, `/api/bot/context?conversationId=${convA.id}`) : null;
+  ok(
+    "BOT_API_KEY (global, retirada) → 401, como cualquier clave desconocida",
+    legacy?.res.status === 401,
+    `status=${legacy?.res.status}`
+  );
+
+  // E9 — Sin sesión, SIEMPRE la marca de la plataforma, nunca la de un tenant.
+  const loginPage = await fetch(`${BASE}/login`);
+  const loginHtml = await loginPage.text();
+  ok(
+    "login sin sesión usa la marca de la plataforma, no la de A ni B",
+    /que es tuyo/i.test(loginHtml),
+    `status=${loginPage.status}`
+  );
+
+  return { RUN, A, B, emailA, emailB, PN_A, PN_B, keyA, keyB, convA, convB };
+}
+
+/**
+ * US4-US7 — El panel de super-admin: gate 404, listar, suplantar/salir,
+ * suspender/reactivar, borrar (nombre incorrecto -> 422, correcto -> 200) y
+ * auditoria. Reutiliza A/B de multiTenantChecks (B termina BORRADA).
+ */
+async function platformChecks(mt) {
+  console.log("\n== 020 (US4-US7): panel de super-admin ==");
+  if (!mt) {
+    ok("hay organizaciones A/B para el panel de plataforma", false, "multiTenantChecks no corrio");
+    return;
+  }
+  const { A, B, emailA, emailB, PN_B, keyB, convB } = mt;
+
+  const ownerTry = await A.api("/api/platform/organizations");
+  ok(
+    "un owner cualquiera -> 404 en /api/platform/* (nunca 401/403)",
+    ownerTry.res.status === 404,
+    `status=${ownerTry.res.status}`
+  );
+
+  const adminEmail = (process.env.PLATFORM_ADMIN_EMAILS ?? "").split(",")[0]?.trim();
+  const adminPassword = process.env.E2E_ADMIN_PASSWORD ?? "password-admin-e2e-123";
+  if (!adminEmail) {
+    ok(
+      "PLATFORM_ADMIN_EMAILS configurado para el arnes",
+      false,
+      "sin correo de super-admin: el resto de esta seccion no puede correr"
+    );
+    return;
+  }
+  const admin = createClient();
+  const login = await admin.api("/api/auth/sign-in/email", {
+    method: "POST",
+    body: JSON.stringify({ email: adminEmail, password: adminPassword }),
+  });
+  ok(
+    "login del super-admin (bootstrapped con scripts/platform-admin.mjs)",
+    login.res.ok,
+    JSON.stringify(login.json)
+  );
+
+  const adminPageTry = await A.api("/admin");
+  ok(
+    "un owner cualquiera -> 404 en /admin tambien (paginas, no solo API)",
+    adminPageTry.res.status === 404,
+    `status=${adminPageTry.res.status}`
+  );
+
+  const listA = await admin.api(`/api/platform/organizations?q=${encodeURIComponent(emailA)}`);
+  const orgA = (listA.json?.organizations ?? []).find((o) => o.ownerEmail === emailA);
+  ok(
+    "el panel lista A con su owner y sin suspender",
+    !!orgA && orgA.suspendedAt === null,
+    JSON.stringify(listA.json)
+  );
+  const listB = await admin.api(`/api/platform/organizations?q=${encodeURIComponent(emailB)}`);
+  const orgB = (listB.json?.organizations ?? []).find((o) => o.ownerEmail === emailB);
+  ok(
+    "el panel lista B con su owner y sin suspender",
+    !!orgB && orgB.suspendedAt === null,
+    JSON.stringify(listB.json)
+  );
+  if (!orgA || !orgB) return;
+
+  // Suplantar A: ve SU bandeja, pero no puede tocar equipo/clave.
+  const imp = await admin.api("/api/platform/impersonation", {
+    method: "POST",
+    body: JSON.stringify({ organizationId: orgA.id }),
+  });
+  ok("suplantar A", imp.res.ok && imp.json?.redirect === "/inbox", JSON.stringify(imp.json));
+  const inboxAsA = await admin.api("/api/conversations");
+  const seesA = (inboxAsA.json?.conversations ?? []).some((c) => c.id === mt.convA?.id);
+  ok("suplantando A, el admin ve la bandeja de A", seesA, JSON.stringify(inboxAsA.json));
+  const teamBlocked = await admin.api("/api/settings/team", {
+    method: "POST",
+    body: JSON.stringify({ name: "Suplantador", email: `nope-${mt.RUN}@x.com`, password: "password123" }),
+  });
+  ok(
+    "equipo bloqueado durante la suplantacion (403 suplantacion_restringida)",
+    teamBlocked.res.status === 403 && teamBlocked.json?.error?.code === "suplantacion_restringida",
+    JSON.stringify(teamBlocked.json)
+  );
+  const apiKeyBlocked = await admin.api("/api/settings/api-key", { method: "POST" });
+  ok(
+    "clave de API bloqueada durante la suplantacion (403)",
+    apiKeyBlocked.res.status === 403 && apiKeyBlocked.json?.error?.code === "suplantacion_restringida",
+    JSON.stringify(apiKeyBlocked.json)
+  );
+
+  const exitImp = await admin.api("/api/platform/impersonation", { method: "DELETE" });
+  ok(
+    "salir de la suplantacion vuelve a /admin",
+    exitImp.res.ok && exitImp.json?.redirect === "/admin",
+    JSON.stringify(exitImp.json)
+  );
+
+  // Suspender B.
+  const suspend = await admin.api(`/api/platform/organizations/${orgB.id}/suspend`, {
+    method: "POST",
+    body: JSON.stringify({ reason: "prueba e2e" }),
+  });
+  ok("suspender B", suspend.res.ok && !!suspend.json?.suspendedAt, JSON.stringify(suspend.json));
+
+  const loginBSuspended = await createClient().api("/api/auth/sign-in/email", {
+    method: "POST",
+    body: JSON.stringify({ email: emailB, password: MT_PASSWORD }),
+  });
+  ok(
+    "un login NUEVO de B se rechaza mientras esta suspendida",
+    !loginBSuspended.res.ok,
+    `status=${loginBSuspended.res.status}`
+  );
+  // suspendOrganization revoca las sesiones de sus miembros: la sesion que B
+  // ya tenia deja de existir, asi que el siguiente request de B es 401 (sin
+  // sesion), no 403 -- el 403 org_suspendida es para una sesion que SIGUE
+  // viva y cuya organizacion se suspendio despues de resolverla.
+  const bAfterSuspend = await B.api("/api/conversations");
+  ok(
+    "la sesion que B ya tenia queda cortada (401: su sesion fue revocada)",
+    bAfterSuspend.res.status === 401,
+    `status=${bAfterSuspend.res.status}`
+  );
+
+  const beforeInbound = (
+    await admin.api(`/api/platform/organizations?q=${encodeURIComponent(emailB)}`)
+  ).json?.organizations?.find((o) => o.id === orgB.id);
+  await api("/api/dev/wa-mock/inbound", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: PN_B,
+      from: `52155${mt.RUN}03`,
+      name: "Mientras B esta suspendida",
+      text: "esto no debe guardarse",
+      waMessageId: `wamid.e2e.mt.b.suspend.${mt.RUN}`,
+    }),
+  });
+  await sleep(1500);
+  const afterInbound = (
+    await admin.api(`/api/platform/organizations?q=${encodeURIComponent(emailB)}`)
+  ).json?.organizations?.find((o) => o.id === orgB.id);
+  ok(
+    "un webhook a B suspendida se descarta (contactos/mensajes no crecen)",
+    afterInbound?.contacts === beforeInbound?.contacts && afterInbound?.messages === beforeInbound?.messages,
+    JSON.stringify({ antes: beforeInbound, despues: afterInbound })
+  );
+
+  const botBSuspended = await botAs(keyB, `/api/bot/context?conversationId=${convB?.id}`);
+  ok(
+    "la clave de B (suspendida) -> 403 org_suspendida",
+    botBSuspended.res.status === 403 && botBSuspended.json?.error?.code === "org_suspendida",
+    JSON.stringify(botBSuspended.json)
+  );
+
+  // Reactivar.
+  const reactivate = await admin.api(`/api/platform/organizations/${orgB.id}/reactivate`, { method: "POST" });
+  ok("reactivar B", reactivate.res.ok, JSON.stringify(reactivate.json));
+  const loginBAgain = await createClient().api("/api/auth/sign-in/email", {
+    method: "POST",
+    body: JSON.stringify({ email: emailB, password: MT_PASSWORD }),
+  });
+  ok("login de B vuelve a funcionar tras reactivar", loginBAgain.res.ok, JSON.stringify(loginBAgain.json));
+
+  // Borrar B: nombre incorrecto -> 422; nombre correcto -> 200.
+  const wrongDelete = await admin.api(`/api/platform/organizations/${orgB.id}`, {
+    method: "DELETE",
+    body: JSON.stringify({ confirmName: "nombre-equivocado-a-proposito" }),
+  });
+  ok(
+    "borrar B con el nombre incorrecto -> 422 confirmacion_invalida",
+    wrongDelete.res.status === 422 && wrongDelete.json?.error?.code === "confirmacion_invalida",
+    JSON.stringify(wrongDelete.json)
+  );
+  const rightDelete = await admin.api(`/api/platform/organizations/${orgB.id}`, {
+    method: "DELETE",
+    body: JSON.stringify({ confirmName: orgB.name }),
+  });
+  ok(
+    "borrar B con el nombre exacto -> 200",
+    rightDelete.res.ok && !!rightDelete.json?.metaUnsubscribe,
+    JSON.stringify(rightDelete.json)
+  );
+
+  // Auditoria: los eventos esperados de B (suspender/reactivar/borrar) y de A
+  // (suplantacion, inicio y fin).
+  const auditB = await admin.api(`/api/platform/audit?organizationId=${orgB.id}`);
+  const actionsB = (auditB.json?.events ?? []).map((e) => e.action);
+  ok(
+    "la auditoria de B tiene suspender, reactivar y borrar",
+    ["org_suspended", "org_reactivated", "org_deleted"].every((a) => actionsB.includes(a)),
+    JSON.stringify(actionsB)
+  );
+  const auditA = await admin.api(`/api/platform/audit?organizationId=${orgA.id}`);
+  const actionsA = (auditA.json?.events ?? []).map((e) => e.action);
+  ok(
+    "la auditoria de A tiene inicio y fin de la suplantacion",
+    ["impersonation_started", "impersonation_ended"].every((a) => actionsA.includes(a)),
+    JSON.stringify(actionsA)
+  );
+}
+
+/**
+ * US8/US9 -- Coexistence: Embedded Signup por el mock, un account_update con
+ * la FORMA REAL de Meta confirma el claim, eso dispara la sincronizacion de
+ * contactos + historial (una vez cada una), y los dos campos de entrada
+ * (smb_app_state_sync, history) se aplican con las reglas E2/E3. Organizacion
+ * propia (C): un claim de coexistence no debe chocar con la conexion manual
+ * de A/B.
+ */
+async function sincronizacionChecks() {
+  console.log("\n== 020 (US8/US9): coexistence -- llega con contactos e historial ==");
+  const RUN = Date.now().toString().slice(-6);
+  const C = createClient();
+  const email = `e2e-sync-${RUN}@vocero.test`;
+  const su = await C.api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ email, password: MT_PASSWORD, name: "Negocio Coexistence" }),
+  });
+  ok("alta de la organizacion de sincronizacion (C)", su.res.ok, JSON.stringify(su.json));
+
+  const PN = `PN-E2E-SYNC-${RUN}`;
+  const WABA = `WABA-E2E-SYNC-${RUN}`;
+
+  const startResp = await C.api("/api/settings/whatsapp/start", { method: "POST" });
+  const attempt = startResp.json?.attempt;
+  ok(
+    "arranca el intento de Embedded Signup",
+    startResp.res.ok && !!attempt?.state && !!attempt?.nonce,
+    JSON.stringify(startResp.json)
+  );
+  if (!attempt) return;
+
+  const completeResp = await C.api("/api/settings/whatsapp/complete", {
+    method: "POST",
+    body: JSON.stringify({
+      state: attempt.state,
+      nonce: attempt.nonce,
+      code: "mock-code",
+      wabaId: WABA,
+      phoneNumberId: PN,
+    }),
+  });
+  ok(
+    "completa el intento -> awaiting_confirmation (token intercambiado vía el mock)",
+    completeResp.res.ok && completeResp.json?.status === "awaiting_confirmation",
+    JSON.stringify(completeResp.json)
+  );
+
+  // account_update con la forma REAL de Meta (T040/R3): sin phone_number_id,
+  // enrutado por waba_id -- confirma el claim awaiting_confirmation -> active.
+  const confirm = await api("/api/dev/wa-mock/coexistence", {
+    method: "POST",
+    body: JSON.stringify({ kind: "lifecycle", phoneNumberId: PN, event: "PARTNER_ADDED" }),
+  });
+  ok("entrega el account_update de confirmacion", confirm.res.ok, JSON.stringify(confirm.json));
+
+  await hasta(async () => {
+    const st = (await C.api("/api/settings/whatsapp")).json;
+    return st?.coexistence?.status === "active";
+  }, 20000);
+  const afterActive = (await C.api("/api/settings/whatsapp")).json;
+  ok(
+    "el claim pasa a active (worker de coexistence, cada 5s)",
+    afterActive?.coexistence?.status === "active",
+    JSON.stringify(afterActive?.coexistence)
+  );
+
+  // FR-043: pide contactos y, solo si esa quedo `requested`, historial --
+  // exactamente una llamada de Meta por tipo.
+  await hasta(async () => {
+    const st = (await C.api("/api/settings/whatsapp")).json;
+    return st?.sync?.contacts?.status === "requested" && st?.sync?.history?.status === "requested";
+  }, 20000);
+  const syncStatus = (await C.api("/api/settings/whatsapp")).json?.sync;
+  ok("contactos pedidos (smb_app_state_sync -> requested)", syncStatus?.contacts?.status === "requested", JSON.stringify(syncStatus));
+  ok("historial pedido despues de contactos (history -> requested)", syncStatus?.history?.status === "requested", JSON.stringify(syncStatus));
+
+  const outboxAfterFirst = (await api("/api/dev/wa-mock/outbox")).json?.smbAppDataCalls ?? [];
+  const smbCallsForC = outboxAfterFirst.filter((c) => c.phoneNumberId === PN);
+  ok(
+    "Meta recibio EXACTAMENTE 2 llamadas a smb_app_data, en orden (contactos, historial)",
+    smbCallsForC.length === 2 &&
+      smbCallsForC[0]?.syncType === "smb_app_state_sync" &&
+      smbCallsForC[1]?.syncType === "history",
+    JSON.stringify(smbCallsForC)
+  );
+
+  // Reenviar la MISMA confirmacion (reintento del webhook / reinicio a
+  // mitad): no debe pedir NINGUNA de las dos otra vez.
+  const resend = await api("/api/dev/wa-mock/coexistence", {
+    method: "POST",
+    body: JSON.stringify({ kind: "lifecycle", phoneNumberId: PN, event: "PARTNER_ADDED" }),
+  });
+  ok("reenviar la confirmacion no falla (no-op sobre un claim ya active)", resend.res.ok, JSON.stringify(resend.json));
+  await sleep(6000); // al menos un ciclo del worker (5s) para que, si hubiera un bug, se note.
+  const smbCallsAfterResend = ((await api("/api/dev/wa-mock/outbox")).json?.smbAppDataCalls ?? []).filter(
+    (c) => c.phoneNumberId === PN
+  );
+  ok(
+    "...y sigue en exactamente 2: la confirmacion repetida no vuelve a pedir nada",
+    smbCallsAfterResend.length === 2,
+    JSON.stringify(smbCallsAfterResend)
+  );
+
+  // E3 -- smb_app_state_sync `add`: crea el contacto con el nombre de la
+  // libreta.
+  console.log("\n== 020: smb_app_state_sync -- libreta (E2/E3) ==");
+  const PHONE_1 = `521550${RUN}01`;
+  const NORM_1 = PHONE_1.replace(/^521/, "52");
+  const add1 = await api("/api/dev/wa-mock/coexistence", {
+    method: "POST",
+    body: JSON.stringify({
+      kind: "state_sync",
+      phoneNumberId: PN,
+      entries: [{ action: "add", fullName: "Cliente de la Libreta", phoneNumber: PHONE_1 }],
+    }),
+  });
+  ok("entrega smb_app_state_sync (add)", add1.res.ok, JSON.stringify(add1.json));
+  await hasta(async () => {
+    const cs = (await C.api("/api/contacts")).json?.contacts ?? [];
+    return cs.some((c) => c.phone === NORM_1);
+  }, 20000);
+  const contactsAfterAdd = (await C.api("/api/contacts")).json?.contacts ?? [];
+  const libretaContact = contactsAfterAdd.find((c) => c.phone === NORM_1);
+  ok(
+    "add crea el contacto, con el nombre de la libreta",
+    libretaContact?.name === "Cliente de la Libreta",
+    JSON.stringify(libretaContact)
+  );
+
+  // E3 -- un nombre MANUAL nunca lo pisa un `add` posterior de la libreta.
+  const rename = await C.api(`/api/contacts/${libretaContact.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name: "Nombre Manual" }),
+  });
+  ok("el owner renombra el contacto a mano", rename.res.ok, JSON.stringify(rename.json));
+
+  const PHONE_2 = `521551${RUN}02`;
+  const NORM_2 = PHONE_2.replace(/^521/, "52");
+  await api("/api/dev/wa-mock/coexistence", {
+    method: "POST",
+    body: JSON.stringify({
+      kind: "state_sync",
+      phoneNumberId: PN,
+      entries: [
+        { action: "add", fullName: "Otro Nombre De Libreta", phoneNumber: PHONE_1 },
+        { action: "add", fullName: "Segundo Contacto", phoneNumber: PHONE_2 },
+      ],
+    }),
+  });
+  // El segundo contacto (nuevo) aparece cuando la ENTREGA COMPLETA -incluida
+  // la que intenta pisar el nombre manual- ya se aplico.
+  await hasta(async () => {
+    const cs = (await C.api("/api/contacts")).json?.contacts ?? [];
+    return cs.some((c) => c.phone === NORM_2);
+  }, 20000);
+  const contactsAfterSecond = (await C.api("/api/contacts")).json?.contacts ?? [];
+  const stillManual = contactsAfterSecond.find((c) => c.phone === NORM_1);
+  ok(
+    "un nombre manual no lo pisa un add posterior de la libreta",
+    stillManual?.name === "Nombre Manual",
+    JSON.stringify(stillManual)
+  );
+
+  // E2 -- `remove` NUNCA borra ni toca el contacto del CRM.
+  const PHONE_3 = `521552${RUN}03`;
+  const NORM_3 = PHONE_3.replace(/^521/, "52");
+  await api("/api/dev/wa-mock/coexistence", {
+    method: "POST",
+    body: JSON.stringify({
+      kind: "state_sync",
+      phoneNumberId: PN,
+      entries: [
+        { action: "remove", phoneNumber: PHONE_2 },
+        { action: "add", fullName: "Tercer Contacto", phoneNumber: PHONE_3 },
+      ],
+    }),
+  });
+  await hasta(async () => {
+    const cs = (await C.api("/api/contacts")).json?.contacts ?? [];
+    return cs.some((c) => c.phone === NORM_3);
+  }, 20000);
+  const contactsAfterRemove = (await C.api("/api/contacts")).json?.contacts ?? [];
+  const stillThere = contactsAfterRemove.find((c) => c.phone === NORM_2);
+  ok(
+    "remove de la libreta no borra ni toca el contacto del CRM (E2)",
+    !!stillThere && stillThere.name === "Segundo Contacto" && !stillThere.archivedAt,
+    JSON.stringify(stillThere)
+  );
+
+  // US8-4 -- `history` con hilos: mensajes con la direccion correcta, sin
+  // agente ni cambio de handoff (FR-046).
+  console.log("\n== 020: history -- importa hilos con direccion correcta ==");
+  const HIST_THREAD = `521556${RUN}04`;
+  const histNorm = HIST_THREAD.replace(/^521/, "52");
+  const histTs = Math.floor(Date.now() / 1000) - 3600;
+  await api("/api/dev/wa-mock/coexistence", {
+    method: "POST",
+    body: JSON.stringify({
+      kind: "history",
+      phoneNumberId: PN,
+      phase: "COMPLETE",
+      progress: 100,
+      threads: [
+        {
+          id: HIST_THREAD,
+          messages: [
+            {
+              id: `wamid.e2e.hist.in.${RUN}`,
+              from: HIST_THREAD,
+              to: PN,
+              type: "text",
+              text: { body: "mensaje historico entrante" },
+              timestamp: String(histTs),
+            },
+            {
+              id: `wamid.e2e.hist.out.${RUN}`,
+              from: "5215500000000",
+              to: HIST_THREAD,
+              type: "text",
+              text: { body: "mensaje historico saliente" },
+              timestamp: String(histTs + 60),
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  await hasta(async () => {
+    const cs = (await C.api("/api/conversations")).json?.conversations ?? [];
+    return cs.some((c) => c.contact.phone === histNorm);
+  }, 20000);
+  const convsC = (await C.api("/api/conversations")).json?.conversations ?? [];
+  const histConv = convsC.find((c) => c.contact.phone === histNorm);
+  ok("history crea la conversacion del hilo importado", !!histConv, JSON.stringify(convsC));
+  ok(
+    "el import de history NO dispara handoff (FR-046)",
+    !histConv?.handoffAt,
+    JSON.stringify(histConv)
+  );
+  if (histConv) {
+    const histMsgs = (await C.api(`/api/conversations/${histConv.id}/messages`)).json?.messages ?? [];
+    const inMsg = histMsgs.find((m) => m.text === "mensaje historico entrante");
+    const outMsg = histMsgs.find((m) => m.text === "mensaje historico saliente");
+    ok("el mensaje del cliente entra como `in`", inMsg?.direction === "in", JSON.stringify(inMsg));
+    ok("el mensaje del negocio entra como `out`", outMsg?.direction === "out", JSON.stringify(outMsg));
+    ok(
+      "ningun mensaje de history viene del agente (origin != ai)",
+      histMsgs.every((m) => m.origin !== "ai"),
+      JSON.stringify(histMsgs.map((m) => m.origin))
+    );
+  }
+  await hasta(async () => (await C.api("/api/settings/whatsapp")).json?.sync?.history?.progress === 100, 20000);
+  const syncAfterHistory = (await C.api("/api/settings/whatsapp")).json?.sync;
+  ok(
+    "el progreso de Meta se refleja en Ajustes -> WhatsApp",
+    syncAfterHistory?.history?.progress === 100,
+    JSON.stringify(syncAfterHistory)
+  );
+
+  // US8-6 -- el camino infeliz: Meta rechaza smb_app_data (`-fail`) -> estado
+  // `failed` con motivo redactado, y el owner puede reintentar sin que la
+  // ruta se caiga.
+  console.log("\n== 020: smb_app_data -- camino infeliz (-fail) y reintento ==");
+  const D = createClient();
+  const emailD = `e2e-sync-fail-${RUN}@vocero.test`;
+  await D.api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ email: emailD, password: MT_PASSWORD, name: "Negocio Coexistence (falla)" }),
+  });
+  const PN_FAIL = `PN-E2E-SYNC-FAIL-${RUN}-fail`;
+  const WABA_FAIL = `WABA-E2E-SYNC-FAIL-${RUN}`;
+  const startFail = await D.api("/api/settings/whatsapp/start", { method: "POST" });
+  const attemptFail = startFail.json?.attempt;
+  const completeFail = attemptFail
+    ? await D.api("/api/settings/whatsapp/complete", {
+        method: "POST",
+        body: JSON.stringify({
+          state: attemptFail.state,
+          nonce: attemptFail.nonce,
+          code: "mock-code",
+          wabaId: WABA_FAIL,
+          phoneNumberId: PN_FAIL,
+        }),
+      })
+    : null;
+  ok(
+    "arranca y completa el intento de la organizacion del camino infeliz",
+    !!attemptFail && !!completeFail?.res.ok,
+    JSON.stringify({ attemptFail, complete: completeFail?.json })
+  );
+  await api("/api/dev/wa-mock/coexistence", {
+    method: "POST",
+    body: JSON.stringify({ kind: "lifecycle", phoneNumberId: PN_FAIL, event: "PARTNER_ADDED" }),
+  });
+  await hasta(async () => {
+    const st = (await D.api("/api/settings/whatsapp")).json;
+    return st?.sync?.contacts?.status === "failed";
+  }, 20000);
+  const failStatus = (await D.api("/api/settings/whatsapp")).json?.sync;
+  ok(
+    "Meta rechaza smb_app_data (-fail) -> estado failed, con un motivo redactado (sin payload crudo)",
+    failStatus?.contacts?.status === "failed" &&
+      typeof failStatus?.contacts?.error === "string" &&
+      !/token|Bearer/i.test(failStatus.contacts.error),
+    JSON.stringify(failStatus)
+  );
+  ok(
+    "history NUNCA se pide si contactos no quedo requested (orden de FR-043)",
+    failStatus?.history === null,
+    JSON.stringify(failStatus)
+  );
+  const retry = await D.api("/api/settings/whatsapp/sync", {
+    method: "POST",
+    body: JSON.stringify({ type: "smb_app_state_sync" }),
+  });
+  ok(
+    "el owner puede pedir reintentar dentro de la ventana de 24h (200, sin caerse)",
+    retry.res.ok,
+    JSON.stringify(retry.json)
+  );
 }

@@ -69,6 +69,17 @@ export const POST = withAuth(async (session, req: Request) => {
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "No se pudo crear la cuenta";
+    // 020 (FR-004) — El hook de Better Auth rechaza también esta alta
+    // interna: ese correo está reservado para el super-admin de la
+    // plataforma, nadie puede adelantarse a registrarlo como cuenta de
+    // equipo.
+    if (message === "correo_reservado") {
+      return apiError(
+        403,
+        "correo_reservado",
+        "Ese correo está reservado para la plataforma"
+      );
+    }
     if (/exist/i.test(message)) {
       return apiError(409, "duplicate", "Ya existe una cuenta con ese correo");
     }
